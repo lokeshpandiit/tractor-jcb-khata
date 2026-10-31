@@ -25,19 +25,53 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Create Clean Android Folder with Working Launcher
+      - name: Rebuild Clean Android & Fix Launcher Icon
         run: |
           rm -rf android
-          flutter create . --platforms android
+          flutter create . --platforms android --project-name tractor_jcb_khata
           
-          # Fix Kotlin Version
+          # Fix Kotlin Version to 1.9.24
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/g' android/settings.gradle
-          
-          # Change App Name to LxH ONE
-          sed -i 's/android:label="[^"]*"/android:label="LxH ONE"/g' android/app/src/main/AndroidManifest.xml
-          
-          # Inject Permissions cleanly before <application
-          sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/><uses-permission android:name="android.permission.READ_CONTACTS"\/><uses-permission android:name="android.permission.SEND_SMS"\/><uses-permission android:name="android.permission.CALL_PHONE"\/><application/g' android/app/src/main/AndroidManifest.xml
+
+          # Use Python to write a 100% pure, Launcher-ready AndroidManifest.xml
+          python3 - << 'EOF'
+          manifest = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.READ_CONTACTS"/>
+              <uses-permission android:name="android.permission.SEND_SMS"/>
+              <uses-permission android:name="android.permission.CALL_PHONE"/>
+
+              <uses-feature android:name="android.hardware.telephony" android:required="false"/>
+
+              <application
+                  android:label="LxH ONE"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                          android:name="io.flutter.embedding.android.NormalTheme"
+                          android:resource="@style/NormalTheme" />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+              </application>
+          </manifest>'''
+
+          with open('android/app/src/main/AndroidManifest.xml', 'w') as f:
+              f.write(manifest)
+          EOF
 
       - name: Get Dependencies
         run: flutter pub get
