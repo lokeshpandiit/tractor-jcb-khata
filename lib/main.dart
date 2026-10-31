@@ -143,7 +143,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
   DateTime? selectedFilterDate;
 
-  // Global State Lists
   List<Vehicle> vehicles = [];
   List<Person> workers = [];
   List<Person> clients = [];
@@ -156,11 +155,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _loadData();
   }
 
-  // Load Data from Local Storage (SharedPreferences)
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     
-    // Vehicles
     final vehiclesString = prefs.getString('vehicles_data');
     if (vehiclesString != null) {
       final List decoded = jsonDecode(vehiclesString);
@@ -173,7 +170,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ];
     }
 
-    // Workers
     final workersString = prefs.getString('workers_data');
     if (workersString != null) {
       final List decoded = jsonDecode(workersString);
@@ -185,7 +181,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ];
     }
 
-    // Clients
     final clientsString = prefs.getString('clients_data');
     if (clientsString != null) {
       final List decoded = jsonDecode(clientsString);
@@ -197,14 +192,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ];
     }
 
-    // Logs
     final logsString = prefs.getString('logs_data');
     if (logsString != null) {
       final List decoded = jsonDecode(logsString);
       logs = decoded.map((e) => WorkLog.fromJson(e)).toList();
     }
 
-    // CashBook
     final cashString = prefs.getString('cash_data');
     if (cashString != null) {
       final List decoded = jsonDecode(cashString);
@@ -214,7 +207,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     setState(() {});
   }
 
-  // Save Data to Local Storage
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('vehicles_data', jsonEncode(vehicles.map((e) => e.toJson()).toList()));
@@ -326,7 +318,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // Google Sheet Auto-Sync Function
   void _syncToGoogleSheet() async {
     final sheetUrlCtrl = TextEditingController();
     showDialog(
@@ -697,7 +688,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               children: [
                 IconButton(
                   icon: const Icon(Icons.phone, color: Colors.green),
-                  onPressed: () => launchUrl(Uri.parse('tel:${p.phone}')),
+                  onPressed: () => launchUrl(Uri.parse('tel:${p.phone}'), mode: LaunchMode.externalApplication),
                 ),
                 IconButton(
                   icon: const Icon(Icons.delete, color: Colors.red, size: 20),
@@ -802,34 +793,28 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // Multiple Contacts Picker with proper Permission Handling & Settings Dialog
   void _addMultiplePersonsDialog(String role) async {
-    PermissionStatus status = await Permission.contacts.status;
-    if (!status.isGranted) {
-      status = await Permission.contacts.request();
-    }
-
-    if (status.isGranted) {
-      try {
-        List<Contact> contacts = await FlutterContacts.openExternalPick() as List<Contact>;
-        if (contacts.isNotEmpty) {
-          setState(() {
-            for (var contact in contacts) {
-              if (contact.phones.isNotEmpty) {
-                String name = contact.displayName;
-                String phone = contact.phones.first.number.replaceAll(RegExp(r'\D'), '');
-                final newP = Person(id: DateTime.now().toString() + phone, name: name, phone: phone, role: role);
-                if (role == 'Worker') {
-                  workers.add(newP);
-                } else {
-                  clients.add(newP);
-                }
+    try {
+      List<Contact> contacts = await FlutterContacts.openExternalPick() as List<Contact>;
+      if (contacts.isNotEmpty) {
+        setState(() {
+          for (var contact in contacts) {
+            if (contact.phones.isNotEmpty) {
+              String name = contact.displayName;
+              String phone = contact.phones.first.number.replaceAll(RegExp(r'\D'), '');
+              final newP = Person(id: DateTime.now().toString() + phone, name: name, phone: phone, role: role);
+              if (role == 'Worker') {
+                workers.add(newP);
+              } else {
+                clients.add(newP);
               }
             }
-          });
-          _saveData();
-        }
-      } catch (e) {
+          }
+        });
+        _saveData();
+      }
+    } catch (e) {
+      try {
         final contact = await FlutterContacts.openExternalPick();
         if (contact != null && contact.phones.isNotEmpty) {
           setState(() {
@@ -847,62 +832,64 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           });
           _saveData();
         }
+      } catch (err) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $err')),
+        );
       }
-    } else {
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Permission Required'),
-          content: const Text('Contacts permission is required to pick contacts. Please allow it from App Settings.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
-              onPressed: () {
-                Navigator.pop(context);
-                openAppSettings();
-              },
-              child: const Text('Open Settings'),
-            ),
-          ],
-        ),
-      );
     }
   }
 
   void _sendSMS(WorkLog log) async {
-    var status = await Permission.sms.status;
-    if (!status.isGranted) {
-      status = await Permission.sms.request();
-    }
+    final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
+    final message = 'Namaste ${log.clientName}, aapke yahan ${log.date} ko ${log.vehicleName} ne ${log.hours} ghante kaam kiya @ ₹${log.rate}/hr. Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}. - LxH ONE';
     
-    if (status.isGranted) {
-      final msg = Uri.encodeComponent(
-        'Namaste ${log.clientName}, aapke yahan ${log.date} ko ${log.vehicleName} ne ${log.hours} ghante kaam kiya @ ₹${log.rate}/hr. Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}.'
-      );
-      final uri = Uri.parse('sms:${log.clientPhone}?body=$msg');
+    final uri = Uri(
+      scheme: 'sms',
+      path: cleanPhone,
+      queryParameters: {'body': message},
+    );
+
+    try {
       if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        final fallbackUri = Uri.parse('sms:$cleanPhone?body=${Uri.encodeComponent(message)}');
+        await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
       }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open SMS: $e')),
+      );
     }
   }
 
   void _sendWhatsApp(WorkLog log) async {
     final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
-    final msg = Uri.encodeComponent(
-      '🚜 *Tractor/JCB Work Slip*\n\n'
-      'Party: *${log.clientName}*\n'
-      'Date: ${log.date}\n'
-      'Machine: ${log.vehicleName}\n'
-      'Driver: ${log.driverName}\n'
-      'Total Time: *${log.hours} Hours*\n'
-      'Rate: ₹${log.rate}/hr\n'
-      '-------------------------\n'
-      '💰 *Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}*'
-    );
-    final uri = Uri.parse('https://wa.me/91$cleanPhone?text=$msg');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final msg = '*Tractor/JCB Work Slip*\n\n'
+        'Party: *${log.clientName}*\n'
+        'Date: ${log.date}\n'
+        'Machine: ${log.vehicleName}\n'
+        'Driver: ${log.driverName}\n'
+        'Total Time: *${log.hours} Hours*\n'
+        'Rate: ₹${log.rate}/hr\n'
+        '-------------------------\n'
+        '💰 *Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}*';
+
+    final uri = Uri.parse('https://wa.me/91$cleanPhone?text=${Uri.encodeComponent(msg)}');
+    
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('WhatsApp is not installed or could not be opened!')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error launching WhatsApp: $e')),
+      );
     }
   }
 }
