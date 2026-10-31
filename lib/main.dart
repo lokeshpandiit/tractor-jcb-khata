@@ -3,6 +3,9 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
+import 'dart:convert';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const FleetKhataApp());
@@ -14,7 +17,7 @@ class FleetKhataApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Tractor JCB Khata',
+      title: 'LxH ONE',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -138,6 +141,103 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
+  void _deleteLog(int index, WorkLog log) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete Entry?'),
+        content: Text('Kya aap ${log.clientName} ka ₹${log.totalAmount.toStringAsFixed(0)} ka record delete karna chahte hain?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () {
+              setState(() {
+                logs.removeAt(index);
+                // Also remove matching entry from cashbook if exists
+                cashBook.removeWhere((c) => c.title == '${log.clientName} (${log.vehicleName})' && c.amount == log.totalAmount && c.date == log.date);
+              });
+              Navigator.pop(context);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showBackupRestoreDialog() {
+    final restoreController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Backup & Restore'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('1. Apne poore data ka backup copy karein ya WhatsApp par bhejein:', style: TextStyle(fontSize: 13, color: Colors.grey)),
+              const SizedBox(height: 8),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                icon: const Icon(Icons.copy, size: 16),
+                label: const Text('Copy Backup JSON'),
+                onPressed: () {
+                  final data = {
+                    'logs': logs.map((l) => {'id': l.id, 'date': l.date, 'vehicleName': l.vehicleName, 'vehicleType': l.vehicleType, 'driverName': l.driverName, 'clientName': l.clientName, 'clientPhone': l.clientPhone, 'hours': l.hours, 'rate': l.rate, 'totalAmount': l.totalAmount}).toList(),
+                  };
+                  Clipboard.setData(ClipboardData(text: jsonEncode(data)));
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup Copied to Clipboard!')));
+                },
+              ),
+              const Divider(height: 24),
+              const Text('2. Purana backup yahan paste karke Restore karein:', style: TextStyle(fontSize: 13, color: Colors.grey)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: restoreController,
+                maxLines: 3,
+                decoration: const InputDecoration(hintText: 'Paste Backup JSON here', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 8),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
+                onPressed: () {
+                  try {
+                    final decoded = jsonDecode(restoreController.text);
+                    final List fetchedLogs = decoded['logs'] ?? [];
+                    setState(() {
+                      logs = fetchedLogs.map((l) => WorkLog(
+                        id: l['id'] ?? '',
+                        date: l['date'] ?? '',
+                        vehicleName: l['vehicleName'] ?? '',
+                        vehicleType: l['vehicleType'] ?? '',
+                        driverName: l['driverName'] ?? '',
+                        clientName: l['clientName'] ?? '',
+                        clientPhone: l['clientPhone'] ?? '',
+                        hours: (l['hours'] ?? 0).toDouble(),
+                        rate: (l['rate'] ?? 0).toDouble(),
+                        totalAmount: (l['totalAmount'] ?? 0).toDouble(),
+                      )).toList();
+                    });
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Data Restored Successfully!')));
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid Backup Data!')));
+                  }
+                },
+                child: const Text('Restore Data'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final screens = [
@@ -150,9 +250,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Tractor JCB Khata', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        title: const Text('LxH ONE', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFE65100),
         elevation: 2,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_backup_restore, color: Colors.white),
+            tooltip: 'Backup & Restore',
+            onPressed: _showBackupRestoreDialog,
+          ),
+        ],
       ),
       body: screens[_currentIndex],
       bottomNavigationBar: NavigationBar(
@@ -227,7 +334,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text('${log.clientName} (${log.date})', style: const TextStyle(fontWeight: FontWeight.bold)),
-                              Text('₹${log.totalAmount.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16)),
+                              Row(
+                                children: [
+                                  Text('₹${log.totalAmount.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16)),
+                                  const SizedBox(width: 8),
+                                  GestureDetector(
+                                    onTap: () => _deleteLog(i, log),
+                                    child: const Icon(Icons.delete, color: Colors.red, size: 20),
+                                  ),
+                                ],
+                              ),
                             ],
                           ),
                           const SizedBox(height: 4),
