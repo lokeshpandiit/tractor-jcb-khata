@@ -802,9 +802,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // Multiple Contacts Picker with Runtime Permission Request
+  // Multiple Contacts Picker with proper Permission Handling & Settings Dialog
   void _addMultiplePersonsDialog(String role) async {
-    var status = await Permission.contacts.status;
+    PermissionStatus status = await Permission.contacts.status;
     if (!status.isGranted) {
       status = await Permission.contacts.request();
     }
@@ -849,8 +849,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         }
       }
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Contacts permission is required to pick contacts!')),
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Permission Required'),
+          content: const Text('Contacts permission is required to pick contacts. Please allow it from App Settings.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
+              onPressed: () {
+                Navigator.pop(context);
+                openAppSettings();
+              },
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
       );
     }
   }
@@ -964,7 +979,6 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
           children: [
             Text('New ${widget.vehicleType} Entry', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 14),
-            // Tractor / Machine Name Manual Input
             TextField(
               controller: machineNameCtrl,
               decoration: InputDecoration(labelText: '${widget.vehicleType} Name (eg. Mahindra 575)'),
