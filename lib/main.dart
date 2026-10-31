@@ -153,16 +153,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   @override
   void initState() {
     super.initState();
-    _requestPermissionsOnStart();
     _loadData();
-  }
-
-  void _requestPermissionsOnStart() async {
-    await [
-      Permission.contacts,
-      Permission.phone,
-      Permission.storage,
-    ].request();
   }
 
   // Load Data from Local Storage (SharedPreferences)
@@ -811,9 +802,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // Multiple Contacts Picker
+  // Multiple Contacts Picker with Runtime Permission Request
   void _addMultiplePersonsDialog(String role) async {
-    if (await Permission.contacts.request().isGranted) {
+    var status = await Permission.contacts.status;
+    if (!status.isGranted) {
+      status = await Permission.contacts.request();
+    }
+
+    if (status.isGranted) {
       try {
         List<Contact> contacts = await FlutterContacts.openExternalPick() as List<Contact>;
         if (contacts.isNotEmpty) {
@@ -852,6 +848,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _saveData();
         }
       }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Contacts permission is required to pick contacts!')),
+      );
     }
   }
 
@@ -916,6 +916,9 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
   Vehicle? selectedVehicle;
   Person? selectedWorker;
   Person? selectedClient;
+  
+  final machineNameCtrl = TextEditingController();
+  final machineNoCtrl = TextEditingController();
   final hoursCtrl = TextEditingController();
   final rateCtrl = TextEditingController();
   double calculatedTotal = 0.0;
@@ -926,6 +929,8 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
     super.initState();
     if (widget.vehicles.isNotEmpty) {
       selectedVehicle = widget.vehicles.first;
+      machineNameCtrl.text = selectedVehicle!.name;
+      machineNoCtrl.text = selectedVehicle!.number;
       rateCtrl.text = selectedVehicle!.defaultRate.toStringAsFixed(0);
     }
     if (widget.workers.isNotEmpty) selectedWorker = widget.workers.first;
@@ -959,17 +964,15 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
           children: [
             Text('New ${widget.vehicleType} Entry', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 14),
-            DropdownButtonFormField<Vehicle>(
-              value: selectedVehicle,
-              decoration: const InputDecoration(labelText: 'Select Machine'),
-              items: widget.vehicles.map((v) => DropdownMenuItem(value: v, child: Text('${v.name} (${v.number})'))).toList(),
-              onChanged: (v) {
-                setState(() {
-                  selectedVehicle = v;
-                  rateCtrl.text = v!.defaultRate.toStringAsFixed(0);
-                  _recalculate();
-                });
-              },
+            // Tractor / Machine Name Manual Input
+            TextField(
+              controller: machineNameCtrl,
+              decoration: InputDecoration(labelText: '${widget.vehicleType} Name (eg. Mahindra 575)'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: machineNoCtrl,
+              decoration: const InputDecoration(labelText: 'Machine Number (eg. HR-24-A-1020)'),
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<Person>(
@@ -1025,11 +1028,11 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
               onPressed: () {
-                if (selectedVehicle != null && selectedWorker != null && selectedClient != null && calculatedTotal > 0) {
+                if (machineNameCtrl.text.isNotEmpty && selectedWorker != null && selectedClient != null && calculatedTotal > 0) {
                   final log = WorkLog(
                     id: DateTime.now().toString(),
                     date: DateFormat('dd MMM yyyy').format(selectedDate),
-                    vehicleName: selectedVehicle!.name,
+                    vehicleName: machineNameCtrl.text,
                     vehicleType: widget.vehicleType,
                     driverName: selectedWorker!.name,
                     clientName: selectedClient!.name,
