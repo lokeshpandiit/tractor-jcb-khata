@@ -25,134 +25,28 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Rebuild Clean Android Project (LxH ONE)
+      - name: Create Clean Android Folder with Working Launcher
         run: |
           rm -rf android
-          flutter create . --platforms android --org com.lxh --project-name lxh_one
+          flutter create . --platforms android
           
           # Fix Kotlin Version
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/g' android/settings.gradle
-
-          # Write 100% Valid Android 14/15 Manifest
-          cat << 'EOF' > android/app/src/main/AndroidManifest.xml
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.INTERNET"/>
-              <uses-permission android:name="android.permission.READ_CONTACTS"/>
-              <uses-permission android:name="android.permission.SEND_SMS"/>
-              <uses-permission android:name="android.permission.CALL_PHONE"/>
-
-              <uses-feature android:name="android.hardware.telephony" android:required="false" />
-
-              <queries>
-                  <intent>
-                      <action android:name="android.intent.action.VIEW" />
-                      <data android:scheme="sms" />
-                  </intent>
-                  <intent>
-                      <action android:name="android.intent.action.VIEW" />
-                      <data android:scheme="tel" />
-                  </intent>
-                  <intent>
-                      <action android:name="android.intent.action.VIEW" />
-                      <data android:scheme="https" />
-                  </intent>
-              </queries>
-
-              <application
-                  android:label="LxH ONE"
-                  android:name="${applicationName}"
-                  android:icon="@mipmap/ic_launcher">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true"
-                      android:launchMode="singleTop"
-                      android:taskAffinity=""
-                      android:theme="@style/LaunchTheme"
-                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-                      android:hardwareAccelerated="true"
-                      android:windowSoftInputMode="adjustResize">
-                      <meta-data
-                        android:name="io.flutter.embedding.android.NormalTheme"
-                        android:resource="@style/NormalTheme"
-                        />
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.action.LAUNCHER"/>
-                      </intent-filter>
-                  </activity>
-                  <meta-data
-                      android:name="flutterEmbedding"
-                      android:value="2" />
-              </application>
-          </manifest>
-          EOF
-
-          # Generate Real Release Keystore for Smooth Installation
-          keytool -genkey -v -keystore android/app/upload-keystore.jks -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 -alias upload -storepass lxhone123 -keypass lxhone123 -dname "CN=LxH ONE, OU=App, O=LxH, L=Sirsa, S=Haryana, C=IN"
-
-          # Configure build.gradle to use Release Keystore & SDK 34
-          cat << 'EOF' > android/app/build.gradle
-          plugins {
-              id "com.android.application"
-              id "kotlin-android"
-              id "dev.flutter.flutter-gradle-plugin"
-          }
-
-          android {
-              namespace = "com.lxh.lxh_one"
-              compileSdk = 34
-              ndkVersion = flutter.ndkVersion
-
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-
-              signingConfigs {
-                  release {
-                      keyAlias 'upload'
-                      keyPassword 'lxhone123'
-                      storeFile file('upload-keystore.jks')
-                      storePassword 'lxhone123'
-                      v1SigningEnabled true
-                      v2SigningEnabled true
-                  }
-              }
-
-              defaultConfig {
-                  applicationId = "com.lxh.lxh_one"
-                  minSdk = 21
-                  targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0.0"
-              }
-
-              buildTypes {
-                  release {
-                      signingConfig = signingConfigs.release
-                      minifyEnabled = false
-                      shrinkResources = false
-                  }
-              }
-          }
-
-          flutter {
-              source = "../.."
-          }
-          EOF
+          
+          # Change App Name to LxH ONE
+          sed -i 's/android:label="[^"]*"/android:label="LxH ONE"/g' android/app/src/main/AndroidManifest.xml
+          
+          # Inject Permissions cleanly before <application
+          sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/><uses-permission android:name="android.permission.READ_CONTACTS"\/><uses-permission android:name="android.permission.SEND_SMS"\/><uses-permission android:name="android.permission.CALL_PHONE"\/><application/g' android/app/src/main/AndroidManifest.xml
 
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Build Signed APK (Fast Install)
+      - name: Build Lightweight APK
         run: flutter build apk --release --split-per-abi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LxH-ONE-Signed-APK
+          name: LxH-ONE-APK
           path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
