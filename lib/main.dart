@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'package:flutter/services.dart';
@@ -318,6 +317,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
+  // Option 3: Google Sheet Auto-Sync Function
   void _syncToGoogleSheet() async {
     final sheetUrlCtrl = TextEditingController();
     showDialog(
@@ -390,30 +390,77 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
+  // Option 1: Export All Data via WhatsApp
+  void _exportAllDataViaWhatsApp() async {
+    double totalJama = cashBook.where((c) => c.type == 'Jama').fold(0.0, (sum, c) => sum + c.amount);
+    double totalKharcha = cashBook.where((c) => c.type == 'Kharcha').fold(0.0, (sum, c) => sum + c.amount);
+
+    String report = '📊 *LxH ONE - Complete Business Report*\n\n';
+    report += '🚜 *Machines Count:* ${vehicles.length}\n';
+    report += '👥 *Drivers & Parties:* ${workers.length + clients.length}\n';
+    report += '📝 *Total Work Logs:* ${logs.length}\n';
+    report += '💰 *Total Jama (Kamai):* ₹${totalJama.toStringAsFixed(0)}\n';
+    report += '💸 *Total Kharcha:* ₹${totalKharcha.toStringAsFixed(0)}\n\n';
+    
+    report += '--- *Recent Work Logs* ---\n';
+    for (var l in logs.take(5)) {
+      report += '• ${l.date} | ${l.clientName} | ${l.vehicleName} | ${l.hours} hrs | ₹${l.totalAmount.toStringAsFixed(0)}\n';
+    }
+
+    final uri = Uri.parse('https://wa.me/?text=${Uri.encodeComponent(report)}');
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
+  // Option 2 & Combined Backup Dialog
   void _showBackupRestoreDialog() {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Backup & Sync'),
+        title: const Text('Backup, Export & Sync (1, 2, 3 All)'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Option 1: WhatsApp Export
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-              icon: const Icon(Icons.copy, size: 16),
-              label: const Text('Copy Backup JSON'),
+              icon: const Icon(Icons.share, size: 16),
+              label: const Text('1. Export All via WhatsApp'),
               onPressed: () {
-                final data = {'logs': logs.map((l) => l.toJson()).toList()};
-                Clipboard.setData(ClipboardData(text: jsonEncode(data)));
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup Copied!')));
+                Navigator.pop(context);
+                _exportAllDataViaWhatsApp();
               },
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
+            // Option 2: JSON Backup Copy
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
+              icon: const Icon(Icons.copy, size: 16),
+              label: const Text('2. Copy JSON Backup'),
+              onPressed: () {
+                final data = {
+                  'vehicles': vehicles.map((v) => v.toJson()).toList(),
+                  'workers': workers.map((w) => w.toJson()).toList(),
+                  'clients': clients.map((c) => c.toJson()).toList(),
+                  'logs': logs.map((l) => l.toJson()).toList(),
+                  'cashBook': cashBook.map((c) => c.toJson()).toList(),
+                };
+                Clipboard.setData(ClipboardData(text: jsonEncode(data)));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Full JSON Backup Copied!')));
+              },
+            ),
+            const SizedBox(height: 10),
+            // Option 3: Google Sheet Sync
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
               icon: const Icon(Icons.cloud_upload, size: 16),
-              label: const Text('Sync to Google Sheet'),
+              label: const Text('3. Sync to Google Sheet'),
               onPressed: () {
                 Navigator.pop(context);
                 _syncToGoogleSheet();
