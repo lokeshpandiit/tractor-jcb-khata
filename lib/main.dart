@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const FleetKhataApp());
@@ -40,6 +41,15 @@ class Vehicle {
   double defaultRate;
 
   Vehicle({required this.id, required this.name, required this.number, required this.type, required this.defaultRate});
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'number': number, 'type': type, 'defaultRate': defaultRate};
+  factory Vehicle.fromJson(Map<String, dynamic> json) => Vehicle(
+    id: json['id'],
+    name: json['name'],
+    number: json['number'],
+    type: json['type'],
+    defaultRate: (json['defaultRate'] ?? 0).toDouble(),
+  );
 }
 
 class Person {
@@ -49,6 +59,14 @@ class Person {
   final String role; // 'Worker' or 'Client'
 
   Person({required this.id, required this.name, required this.phone, required this.role});
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'phone': phone, 'role': role};
+  factory Person.fromJson(Map<String, dynamic> json) => Person(
+    id: json['id'],
+    name: json['name'],
+    phone: json['phone'],
+    role: json['role'],
+  );
 }
 
 class WorkLog {
@@ -75,6 +93,25 @@ class WorkLog {
     required this.rate,
     required this.totalAmount,
   });
+
+  Map<String, dynamic> toJson() => {
+    'id': id, 'date': date, 'vehicleName': vehicleName, 'vehicleType': vehicleType,
+    'driverName': driverName, 'clientName': clientName, 'clientPhone': clientPhone,
+    'hours': hours, 'rate': rate, 'totalAmount': totalAmount
+  };
+
+  factory WorkLog.fromJson(Map<String, dynamic> json) => WorkLog(
+    id: json['id'] ?? '',
+    date: json['date'] ?? '',
+    vehicleName: json['vehicleName'] ?? '',
+    vehicleType: json['vehicleType'] ?? '',
+    driverName: json['driverName'] ?? '',
+    clientName: json['clientName'] ?? '',
+    clientPhone: json['clientPhone'] ?? '',
+    hours: (json['hours'] ?? 0).toDouble(),
+    rate: (json['rate'] ?? 0).toDouble(),
+    totalAmount: (json['totalAmount'] ?? 0).toDouble(),
+  );
 }
 
 class CashEntry {
@@ -84,6 +121,14 @@ class CashEntry {
   final String date;
 
   CashEntry({required this.title, required this.amount, required this.type, required this.date});
+
+  Map<String, dynamic> toJson() => {'title': title, 'amount': amount, 'type': type, 'date': date};
+  factory CashEntry.fromJson(Map<String, dynamic> json) => CashEntry(
+    title: json['title'] ?? '',
+    amount: (json['amount'] ?? 0).toDouble(),
+    type: json['type'] ?? '',
+    date: json['date'] ?? '',
+  );
 }
 
 // Main Navigation Screen
@@ -98,23 +143,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
   DateTime? selectedFilterDate;
 
-  // Global State
-  List<Vehicle> vehicles = [
-    Vehicle(id: '1', name: 'Mahindra 575 DI', number: 'HR-24-A-1020', type: 'Tractor', defaultRate: 800),
-    Vehicle(id: '2', name: 'Swaraj 855 FE', number: 'HR-24-B-4500', type: 'Tractor', defaultRate: 850),
-    Vehicle(id: '3', name: 'JCB 3DX Super', number: 'HR-24-E-9901', type: 'JCB', defaultRate: 1400),
-  ];
-
-  List<Person> workers = [
-    Person(id: 'w1', name: 'Ramesh Driver', phone: '9876543210', role: 'Worker'),
-    Person(id: 'w2', name: 'Suresh Operator', phone: '9123456780', role: 'Worker'),
-  ];
-
-  List<Person> clients = [
-    Person(id: 'c1', name: 'Satish Zamindar', phone: '9988776655', role: 'Client'),
-    Person(id: 'c2', name: 'Amit Builder', phone: '9416012345', role: 'Client'),
-  ];
-
+  // Global State Lists
+  List<Vehicle> vehicles = [];
+  List<Person> workers = [];
+  List<Person> clients = [];
   List<WorkLog> logs = [];
   List<CashEntry> cashBook = [];
 
@@ -122,14 +154,83 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void initState() {
     super.initState();
     _requestPermissionsOnStart();
+    _loadData();
   }
 
   void _requestPermissionsOnStart() async {
     await [
       Permission.contacts,
-      Permission.sms,
       Permission.phone,
+      Permission.storage,
     ].request();
+  }
+
+  // Load Data from Local Storage (SharedPreferences)
+  Future<void> _loadData() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // Vehicles
+    final vehiclesString = prefs.getString('vehicles_data');
+    if (vehiclesString != null) {
+      final List decoded = jsonDecode(vehiclesString);
+      vehicles = decoded.map((e) => Vehicle.fromJson(e)).toList();
+    } else {
+      vehicles = [
+        Vehicle(id: '1', name: 'Mahindra 575 DI', number: 'HR-24-A-1020', type: 'Tractor', defaultRate: 800),
+        Vehicle(id: '2', name: 'Swaraj 855 FE', number: 'HR-24-B-4500', type: 'Tractor', defaultRate: 850),
+        Vehicle(id: '3', name: 'JCB 3DX Super', number: 'HR-24-E-9901', type: 'JCB', defaultRate: 1400),
+      ];
+    }
+
+    // Workers
+    final workersString = prefs.getString('workers_data');
+    if (workersString != null) {
+      final List decoded = jsonDecode(workersString);
+      workers = decoded.map((e) => Person.fromJson(e)).toList();
+    } else {
+      workers = [
+        Person(id: 'w1', name: 'Ramesh Driver', phone: '9876543210', role: 'Worker'),
+        Person(id: 'w2', name: 'Suresh Operator', phone: '9123456780', role: 'Worker'),
+      ];
+    }
+
+    // Clients
+    final clientsString = prefs.getString('clients_data');
+    if (clientsString != null) {
+      final List decoded = jsonDecode(clientsString);
+      clients = decoded.map((e) => Person.fromJson(e)).toList();
+    } else {
+      clients = [
+        Person(id: 'c1', name: 'Satish Zamindar', phone: '9988776655', role: 'Client'),
+        Person(id: 'c2', name: 'Amit Builder', phone: '9416012345', role: 'Client'),
+      ];
+    }
+
+    // Logs
+    final logsString = prefs.getString('logs_data');
+    if (logsString != null) {
+      final List decoded = jsonDecode(logsString);
+      logs = decoded.map((e) => WorkLog.fromJson(e)).toList();
+    }
+
+    // CashBook
+    final cashString = prefs.getString('cash_data');
+    if (cashString != null) {
+      final List decoded = jsonDecode(cashString);
+      cashBook = decoded.map((e) => CashEntry.fromJson(e)).toList();
+    }
+
+    setState(() {});
+  }
+
+  // Save Data to Local Storage
+  Future<void> _saveData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('vehicles_data', jsonEncode(vehicles.map((e) => e.toJson()).toList()));
+    await prefs.setString('workers_data', jsonEncode(workers.map((e) => e.toJson()).toList()));
+    await prefs.setString('clients_data', jsonEncode(clients.map((e) => e.toJson()).toList()));
+    await prefs.setString('logs_data', jsonEncode(logs.map((e) => e.toJson()).toList()));
+    await prefs.setString('cash_data', jsonEncode(cashBook.map((e) => e.toJson()).toList()));
   }
 
   void _openWorkEntryModal(String vehicleType) {
@@ -151,6 +252,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               date: log.date,
             ));
           });
+          _saveData();
         },
       ),
     );
@@ -161,7 +263,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delete Machine?'),
-        content: Text('Kya aap "${v.name}" (${v.number}) ko delete karna chahte hain?'),
+        content: Text('Kya aap "${v.name}" ko delete karna chahte hain?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
@@ -170,6 +272,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               setState(() {
                 vehicles.removeWhere((item) => item.id == v.id);
               });
+              _saveData();
               Navigator.pop(context);
             },
             child: const Text('Delete'),
@@ -197,6 +300,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   clients.removeWhere((item) => item.id == p.id);
                 }
               });
+              _saveData();
               Navigator.pop(context);
             },
             child: const Text('Delete'),
@@ -221,6 +325,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 logs.removeAt(index);
                 cashBook.removeWhere((c) => c.title == '${log.clientName} (${log.vehicleName})' && c.amount == log.totalAmount && c.date == log.date);
               });
+              _saveData();
               Navigator.pop(context);
             },
             child: const Text('Delete'),
@@ -230,7 +335,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // Google Sheet Sync Function (Categorized + Daily Log)
+  // Google Sheet Auto-Sync Function
   void _syncToGoogleSheet() async {
     final sheetUrlCtrl = TextEditingController();
     showDialog(
@@ -256,7 +361,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               if (sheetUrlCtrl.text.isEmpty) return;
               Navigator.pop(context);
               
-              // Loading Dialog
               showDialog(
                 context: context,
                 barrierDismissible: false,
@@ -286,7 +390,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   body: jsonEncode(payload),
                 );
 
-                Navigator.pop(context); // Close loading
+                Navigator.pop(context);
                 if (response.statusCode == 200) {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Google Sheet Sync Successful!')));
                 } else {
@@ -305,81 +409,35 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   void _showBackupRestoreDialog() {
-    final restoreController = TextEditingController();
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Backup & Restore'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text('1. Backup Copy Karein:', style: TextStyle(fontSize: 13, color: Colors.grey)),
-              const SizedBox(height: 8),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-                icon: const Icon(Icons.copy, size: 16),
-                label: const Text('Copy Backup JSON'),
-                onPressed: () {
-                  final data = {
-                    'logs': logs.map((l) => {'id': l.id, 'date': l.date, 'vehicleName': l.vehicleName, 'vehicleType': l.vehicleType, 'driverName': l.driverName, 'clientName': l.clientName, 'clientPhone': l.clientPhone, 'hours': l.hours, 'rate': l.rate, 'totalAmount': l.totalAmount}).toList(),
-                  };
-                  Clipboard.setData(ClipboardData(text: jsonEncode(data)));
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup Copied!')));
-                },
-              ),
-              const Divider(height: 24),
-              const Text('2. Google Sheet Cloud Sync:', style: TextStyle(fontSize: 13, color: Colors.grey)),
-              const SizedBox(height: 8),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
-                icon: const Icon(Icons.cloud_upload, size: 16),
-                label: const Text('Sync to Google Sheet'),
-                onPressed: () {
-                  Navigator.pop(context);
-                  _syncToGoogleSheet();
-                },
-              ),
-              const Divider(height: 24),
-              const Text('3. Restore Data:', style: TextStyle(fontSize: 13, color: Colors.grey)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: restoreController,
-                maxLines: 2,
-                decoration: const InputDecoration(hintText: 'Paste Backup JSON here', border: OutlineInputBorder()),
-              ),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
-                onPressed: () {
-                  try {
-                    final decoded = jsonDecode(restoreController.text);
-                    final List fetchedLogs = decoded['logs'] ?? [];
-                    setState(() {
-                      logs = fetchedLogs.map((l) => WorkLog(
-                        id: l['id'] ?? '',
-                        date: l['date'] ?? '',
-                        vehicleName: l['vehicleName'] ?? '',
-                        vehicleType: l['vehicleType'] ?? '',
-                        driverName: l['driverName'] ?? '',
-                        clientName: l['clientName'] ?? '',
-                        clientPhone: l['clientPhone'] ?? '',
-                        hours: (l['hours'] ?? 0).toDouble(),
-                        rate: (l['rate'] ?? 0).toDouble(),
-                        totalAmount: (l['totalAmount'] ?? 0).toDouble(),
-                      )).toList();
-                    });
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Restored Successfully!')));
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid Data!')));
-                  }
-                },
-                child: const Text('Restore'),
-              ),
-            ],
-          ),
+        title: const Text('Backup & Sync'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+              icon: const Icon(Icons.copy, size: 16),
+              label: const Text('Copy Backup JSON'),
+              onPressed: () {
+                final data = {'logs': logs.map((l) => l.toJson()).toList()};
+                Clipboard.setData(ClipboardData(text: jsonEncode(data)));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup Copied!')));
+              },
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
+              icon: const Icon(Icons.cloud_upload, size: 16),
+              label: const Text('Sync to Google Sheet'),
+              onPressed: () {
+                Navigator.pop(context);
+                _syncToGoogleSheet();
+              },
+            ),
+          ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
@@ -610,6 +668,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 v.number = numCtrl.text;
                 v.defaultRate = double.tryParse(rateCtrl.text) ?? v.defaultRate;
               });
+              _saveData();
               Navigator.pop(context);
             },
             child: const Text('Save'),
@@ -741,6 +800,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     date: DateFormat('dd MMM yyyy').format(DateTime.now()),
                   ));
                 });
+                _saveData();
                 Navigator.pop(context);
               }
             },
@@ -771,9 +831,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               }
             }
           });
+          _saveData();
         }
       } catch (e) {
-        // Fallback to single pick if multiple returns object error
         final contact = await FlutterContacts.openExternalPick();
         if (contact != null && contact.phones.isNotEmpty) {
           setState(() {
@@ -789,18 +849,26 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               clients.add(newP);
             }
           });
+          _saveData();
         }
       }
     }
   }
 
   void _sendSMS(WorkLog log) async {
-    final msg = Uri.encodeComponent(
-      'Namaste ${log.clientName}, aapke yahan ${log.date} ko ${log.vehicleName} ne ${log.hours} ghante kaam kiya @ ₹${log.rate}/hr. Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}.'
-    );
-    final uri = Uri.parse('sms:${log.clientPhone}?body=$msg');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
+    var status = await Permission.sms.status;
+    if (!status.isGranted) {
+      status = await Permission.sms.request();
+    }
+    
+    if (status.isGranted) {
+      final msg = Uri.encodeComponent(
+        'Namaste ${log.clientName}, aapke yahan ${log.date} ko ${log.vehicleName} ne ${log.hours} ghante kaam kiya @ ₹${log.rate}/hr. Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}.'
+      );
+      final uri = Uri.parse('sms:${log.clientPhone}?body=$msg');
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      }
     }
   }
 
