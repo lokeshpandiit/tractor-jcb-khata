@@ -25,10 +25,14 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Clean and Get Dependencies
+      - name: Auto-Fix Android Structure & Permissions
         run: |
-          flutter clean
-          flutter pub get
+          rm -rf android
+          flutter create . --platforms android --project-name tractor_jcb_khata
+          sed -i '/<application/i <uses-permission android:name="android.permission.READ_CONTACTS"/><uses-permission android:name="android.permission.SEND_SMS"/><uses-permission android:name="android.permission.CALL_PHONE"/>' android/app/src/main/AndroidManifest.xml
+
+      - name: Get Dependencies
+        run: flutter pub get
 
       - name: Build APK (Release)
         run: flutter build apk --release
