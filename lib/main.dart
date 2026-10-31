@@ -34,8 +34,8 @@ class FleetKhataApp extends StatelessWidget {
 // Data Models
 class Vehicle {
   final String id;
-  final String name;
-  final String number;
+  String name;
+  String number;
   final String type; // 'Tractor' or 'JCB'
   double defaultRate;
 
@@ -96,6 +96,7 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
+  DateTime? selectedFilterDate;
 
   // Global State
   List<Vehicle> vehicles = [
@@ -117,6 +118,20 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   List<WorkLog> logs = [];
   List<CashEntry> cashBook = [];
 
+  @override
+  void initState() {
+    super.initState();
+    _requestPermissionsOnStart();
+  }
+
+  void _requestPermissionsOnStart() async {
+    await [
+      Permission.contacts,
+      Permission.sms,
+      Permission.phone,
+    ].request();
+  }
+
   void _openWorkEntryModal(String vehicleType) {
     showModalBottomSheet(
       context: context,
@@ -137,6 +152,56 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ));
           });
         },
+      ),
+    );
+  }
+
+  void _deleteVehicle(Vehicle v) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete Machine?'),
+        content: Text('Kya aap "${v.name}" (${v.number}) ko delete karna chahte hain?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () {
+              setState(() {
+                vehicles.removeWhere((item) => item.id == v.id);
+              });
+              Navigator.pop(context);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _deletePerson(Person p, String role) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Delete $role?'),
+        content: Text('Kya aap "${p.name}" ko list se hatana chahte hain?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () {
+              setState(() {
+                if (role == 'Worker') {
+                  workers.removeWhere((item) => item.id == p.id);
+                } else {
+                  clients.removeWhere((item) => item.id == p.id);
+                }
+              });
+              Navigator.pop(context);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
       ),
     );
   }
@@ -165,6 +230,80 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
+  // Google Sheet Sync Function (Categorized + Daily Log)
+  void _syncToGoogleSheet() async {
+    final sheetUrlCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Google Sheet Auto-Sync'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Apna Google Apps Script Web App URL yahan daalein:', style: TextStyle(fontSize: 13, color: Colors.grey)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: sheetUrlCtrl,
+              decoration: const InputDecoration(hintText: 'https://script.google.com/macros/s/...', border: OutlineInputBorder()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
+            onPressed: () async {
+              if (sheetUrlCtrl.text.isEmpty) return;
+              Navigator.pop(context);
+              
+              // Loading Dialog
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => const Center(child: CircularProgressIndicator()),
+              );
+
+              try {
+                final payload = {
+                  'tractors': vehicles.where((v) => v.type == 'Tractor').map((v) => {'name': v.name, 'number': v.number, 'rate': v.defaultRate}).toList(),
+                  'jcbs': vehicles.where((v) => v.type == 'JCB').map((v) => {'name': v.name, 'number': v.number, 'rate': v.defaultRate}).toList(),
+                  'drivers': workers.map((w) => {'name': w.name, 'phone': w.phone}).toList(),
+                  'parties': clients.map((c) => {'name': c.name, 'phone': c.phone}).toList(),
+                  'khata': cashBook.map((k) => {'title': k.title, 'amount': k.amount, 'type': k.type, 'date': k.date}).toList(),
+                  'daily_work_logs': logs.map((l) => {
+                    'date': l.date,
+                    'driver': l.driverName,
+                    'party': l.clientName,
+                    'hours': l.hours,
+                    'machine': l.vehicleName,
+                    'amount': l.totalAmount
+                  }).toList(),
+                };
+
+                final response = await http.post(
+                  Uri.parse(sheetUrlCtrl.text),
+                  headers: {'Content-Type': 'application/json'},
+                  body: jsonEncode(payload),
+                );
+
+                Navigator.pop(context); // Close loading
+                if (response.statusCode == 200) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Google Sheet Sync Successful!')));
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sync Failed! Check URL.')));
+                }
+              } catch (e) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+              }
+            },
+            child: const Text('Sync Now'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showBackupRestoreDialog() {
     final restoreController = TextEditingController();
     showDialog(
@@ -176,7 +315,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('1. Apne poore data ka backup copy karein:', style: TextStyle(fontSize: 13, color: Colors.grey)),
+              const Text('1. Backup Copy Karein:', style: TextStyle(fontSize: 13, color: Colors.grey)),
               const SizedBox(height: 8),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
@@ -187,15 +326,27 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     'logs': logs.map((l) => {'id': l.id, 'date': l.date, 'vehicleName': l.vehicleName, 'vehicleType': l.vehicleType, 'driverName': l.driverName, 'clientName': l.clientName, 'clientPhone': l.clientPhone, 'hours': l.hours, 'rate': l.rate, 'totalAmount': l.totalAmount}).toList(),
                   };
                   Clipboard.setData(ClipboardData(text: jsonEncode(data)));
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup Copied to Clipboard!')));
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Backup Copied!')));
                 },
               ),
               const Divider(height: 24),
-              const Text('2. Purana backup yahan paste karke Restore karein:', style: TextStyle(fontSize: 13, color: Colors.grey)),
+              const Text('2. Google Sheet Cloud Sync:', style: TextStyle(fontSize: 13, color: Colors.grey)),
+              const SizedBox(height: 8),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
+                icon: const Icon(Icons.cloud_upload, size: 16),
+                label: const Text('Sync to Google Sheet'),
+                onPressed: () {
+                  Navigator.pop(context);
+                  _syncToGoogleSheet();
+                },
+              ),
+              const Divider(height: 24),
+              const Text('3. Restore Data:', style: TextStyle(fontSize: 13, color: Colors.grey)),
               const SizedBox(height: 8),
               TextField(
                 controller: restoreController,
-                maxLines: 3,
+                maxLines: 2,
                 decoration: const InputDecoration(hintText: 'Paste Backup JSON here', border: OutlineInputBorder()),
               ),
               const SizedBox(height: 8),
@@ -220,12 +371,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       )).toList();
                     });
                     Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Data Restored Successfully!')));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Restored Successfully!')));
                   } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid Backup Data!')));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid Data!')));
                   }
                 },
-                child: const Text('Restore Data'),
+                child: const Text('Restore'),
               ),
             ],
           ),
@@ -255,7 +406,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.settings_backup_restore, color: Colors.white),
-            tooltip: 'Backup & Restore',
+            tooltip: 'Backup & Sync',
             onPressed: _showBackupRestoreDialog,
           ),
         ],
@@ -277,7 +428,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   Widget _buildFleetTab(String type) {
     final filteredVehicles = vehicles.where((v) => v.type == type).toList();
-    final filteredLogs = logs.where((l) => l.vehicleType == type).toList();
+    final now = DateTime.now();
+    final filteredLogs = logs.where((l) {
+      if (l.vehicleType != type) return false;
+      try {
+        DateTime logDate = DateFormat('dd MMM yyyy').parse(l.date);
+        if (selectedFilterDate != null) {
+          return logDate.year == selectedFilterDate!.year &&
+                 logDate.month == selectedFilterDate!.month &&
+                 logDate.day == selectedFilterDate!.day;
+        } else {
+          final difference = now.difference(logDate).inDays;
+          return difference >= 0 && difference <= 3;
+        }
+      } catch (e) {
+        return true;
+      }
+    }).toList();
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -302,24 +469,68 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               child: Icon(type == 'Tractor' ? Icons.agriculture : Icons.construction, color: Colors.brown),
             ),
             title: Text(v.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text('No: ${v.number} | Default: ₹${v.defaultRate.toStringAsFixed(0)}/hr'),
-            trailing: IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: () => _editRateDialog(v),
+            subtitle: Text('No: ${v.number} | Rate: ₹${v.defaultRate.toStringAsFixed(0)}/hr'),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
+                  onPressed: () => _editRateDialog(v),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                  onPressed: () => _deleteVehicle(v),
+                ),
+              ],
             ),
           ),
         )),
         const Divider(height: 32),
-        Text('Recent $type Logs', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              selectedFilterDate == null 
+                  ? 'Recent $type Logs (Last 3 Days)' 
+                  : 'Logs: ${DateFormat('dd MMM yyyy').format(selectedFilterDate!)}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            Row(
+              children: [
+                if (selectedFilterDate != null)
+                  TextButton(
+                    onPressed: () => setState(() => selectedFilterDate = null),
+                    child: const Text('Reset', style: TextStyle(color: Colors.red)),
+                  ),
+                IconButton(
+                  icon: const Icon(Icons.calendar_month, color: Color(0xFFE65100)),
+                  tooltip: 'Past Records',
+                  onPressed: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedFilterDate ?? DateTime.now(),
+                      firstDate: DateTime(2023),
+                      lastDate: DateTime.now(),
+                    );
+                    if (picked != null) {
+                      setState(() => selectedFilterDate = picked);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
         const SizedBox(height: 8),
         filteredLogs.isEmpty
-            ? const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('No entries added yet.')))
+            ? const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('No entries found.')))
             : ListView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: filteredLogs.length,
                 itemBuilder: (context, i) {
                   final log = filteredLogs[i];
+                  final originalIndex = logs.indexWhere((l) => l.id == log.id);
                   return Card(
                     margin: const EdgeInsets.symmetric(vertical: 6),
                     child: Padding(
@@ -336,7 +547,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                                   Text('₹${log.totalAmount.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16)),
                                   const SizedBox(width: 8),
                                   GestureDetector(
-                                    onTap: () => _deleteLog(i, log),
+                                    onTap: () => _deleteLog(originalIndex, log),
                                     child: const Icon(Icons.delete, color: Colors.red, size: 20),
                                   ),
                                 ],
@@ -375,22 +586,29 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   void _editRateDialog(Vehicle v) {
-    final controller = TextEditingController(text: v.defaultRate.toStringAsFixed(0));
+    final nameCtrl = TextEditingController(text: v.name);
+    final numCtrl = TextEditingController(text: v.number);
+    final rateCtrl = TextEditingController(text: v.defaultRate.toStringAsFixed(0));
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text('Edit Rate: ${v.name}'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Default Rate Per Hour (₹)'),
+        title: Text('Edit Machine: ${v.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Name')),
+            TextField(controller: numCtrl, decoration: const InputDecoration(labelText: 'Number')),
+            TextField(controller: rateCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Rate/hr (₹)')),
+          ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () {
               setState(() {
-                v.defaultRate = double.tryParse(controller.text) ?? v.defaultRate;
+                v.name = nameCtrl.text;
+                v.number = numCtrl.text;
+                v.defaultRate = double.tryParse(rateCtrl.text) ?? v.defaultRate;
               });
               Navigator.pop(context);
             },
@@ -412,7 +630,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           children: [
             Text(role == 'Worker' ? 'Drivers / Workers' : 'Clients / Parties', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ElevatedButton.icon(
-              onPressed: () => _addPersonDialog(role),
+              onPressed: () => _addMultiplePersonsDialog(role),
               icon: const Icon(Icons.person_add),
               label: const Text('Add New'),
             )
@@ -421,12 +639,21 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         const SizedBox(height: 12),
         ...list.map((p) => Card(
           child: ListTile(
-            leading: CircleAvatar(child: Text(p.name[0])),
+            leading: CircleAvatar(child: Text(p.name.isNotEmpty ? p.name[0] : 'P')),
             title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.bold)),
             subtitle: Text(p.phone),
-            trailing: IconButton(
-              icon: const Icon(Icons.phone, color: Colors.green),
-              onPressed: () => launchUrl(Uri.parse('tel:${p.phone}')),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.phone, color: Colors.green),
+                  onPressed: () => launchUrl(Uri.parse('tel:${p.phone}')),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                  onPressed: () => _deletePerson(p, role),
+                ),
+              ],
             ),
           ),
         )),
@@ -497,7 +724,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(controller: titleController, decoration: const InputDecoration(labelText: 'Detail (eg. Diesel / Driver Kharcha)')),
+            TextField(controller: titleController, decoration: const InputDecoration(labelText: 'Detail (eg. Diesel)')),
             TextField(controller: amountController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Amount (₹)')),
           ],
         ),
@@ -524,56 +751,47 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  void _addPersonDialog(String role) {
-    final nameCtrl = TextEditingController();
-    final phoneCtrl = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Add $role'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Name')),
-            TextField(controller: phoneCtrl, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Mobile Number')),
-            const SizedBox(height: 12),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.contacts),
-              label: const Text('Choose from Contacts'),
-              onPressed: () async {
-                if (await Permission.contacts.request().isGranted) {
-                  final contact = await FlutterContacts.openExternalPick();
-                  if (contact != null && contact.phones.isNotEmpty) {
-                    nameCtrl.text = contact.displayName;
-                    phoneCtrl.text = contact.phones.first.number.replaceAll(RegExp(r'\D'), '');
-                  }
+  // Multiple Contacts Picker
+  void _addMultiplePersonsDialog(String role) async {
+    if (await Permission.contacts.request().isGranted) {
+      try {
+        List<Contact> contacts = await FlutterContacts.openExternalPick() as List<Contact>;
+        if (contacts.isNotEmpty) {
+          setState(() {
+            for (var contact in contacts) {
+              if (contact.phones.isNotEmpty) {
+                String name = contact.displayName;
+                String phone = contact.phones.first.number.replaceAll(RegExp(r'\D'), '');
+                final newP = Person(id: DateTime.now().toString() + phone, name: name, phone: phone, role: role);
+                if (role == 'Worker') {
+                  workers.add(newP);
+                } else {
+                  clients.add(newP);
                 }
-              },
-            )
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              if (nameCtrl.text.isNotEmpty && phoneCtrl.text.isNotEmpty) {
-                setState(() {
-                  final newP = Person(id: DateTime.now().toString(), name: nameCtrl.text, phone: phoneCtrl.text, role: role);
-                  if (role == 'Worker') {
-                    workers.add(newP);
-                  } else {
-                    clients.add(newP);
-                  }
-                });
-                Navigator.pop(context);
               }
-            },
-            child: const Text('Add'),
-          )
-        ],
-      ),
-    );
+            }
+          });
+        }
+      } catch (e) {
+        // Fallback to single pick if multiple returns object error
+        final contact = await FlutterContacts.openExternalPick();
+        if (contact != null && contact.phones.isNotEmpty) {
+          setState(() {
+            final newP = Person(
+              id: DateTime.now().toString(),
+              name: contact.displayName,
+              phone: contact.phones.first.number.replaceAll(RegExp(r'\D'), ''),
+              role: role,
+            );
+            if (role == 'Worker') {
+              workers.add(newP);
+            } else {
+              clients.add(newP);
+            }
+          });
+        }
+      }
+    }
   }
 
   void _sendSMS(WorkLog log) async {
@@ -658,7 +876,7 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
   }
 
   @override
-  Widget build(Context) {
+  Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -695,7 +913,7 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
             const SizedBox(height: 10),
             DropdownButtonFormField<Person>(
               value: selectedClient,
-              decoration: const InputDecoration(labelText: 'Select Client (Jinke Kaam Gaya)'),
+              decoration: const InputDecoration(labelText: 'Select Client (Party)'),
               items: widget.clients.map((c) => DropdownMenuItem(value: c, child: Text('${c.name} (${c.phone})'))).toList(),
               onChanged: (c) => setState(() => selectedClient = c),
             ),
@@ -756,7 +974,7 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
                   Navigator.pop(context);
                 }
               },
-              child: const Text('Save Record & Show Share Option', style: TextStyle(fontSize: 16)),
+              child: const Text('Save Record', style: TextStyle(fontSize: 16)),
             ),
             const SizedBox(height: 20),
           ],
