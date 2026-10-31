@@ -154,7 +154,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             onPressed: () {
               setState(() {
                 logs.removeAt(index);
-                // Also remove matching entry from cashbook if exists
                 cashBook.removeWhere((c) => c.title == '${log.clientName} (${log.vehicleName})' && c.amount == log.totalAmount && c.date == log.date);
               });
               Navigator.pop(context);
@@ -177,7 +176,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('1. Apne poore data ka backup copy karein ya WhatsApp par bhejein:', style: TextStyle(fontSize: 13, color: Colors.grey)),
+              const Text('1. Apne poore data ka backup copy karein:', style: TextStyle(fontSize: 13, color: Colors.grey)),
               const SizedBox(height: 8),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
@@ -306,9 +305,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             subtitle: Text('No: ${v.number} | Default: ₹${v.defaultRate.toStringAsFixed(0)}/hr'),
             trailing: IconButton(
               icon: const Icon(Icons.edit),
-              onPressed: () {
-                _editRateDialog(v);
-              },
+              onPressed: () => _editRateDialog(v),
             ),
           ),
         )),
@@ -609,7 +606,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 }
 
-// Work Entry Form Sheet with Live Hourly Calculation
 class WorkEntrySheet extends StatefulWidget {
   final String vehicleType;
   final List<Vehicle> vehicles;
@@ -662,7 +658,7 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(Context) {
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
