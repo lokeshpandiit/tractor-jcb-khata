@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -31,12 +31,11 @@ class FleetKhataApp extends StatelessWidget {
   }
 }
 
-// Data Models
 class Vehicle {
   final String id;
   String name;
   String number;
-  final String type; // 'Tractor' or 'JCB'
+  final String type;
   double defaultRate;
 
   Vehicle({required this.id, required this.name, required this.number, required this.type, required this.defaultRate});
@@ -55,7 +54,7 @@ class Person {
   final String id;
   String name;
   String phone;
-  final String role; // 'Worker' or 'Client'
+  final String role;
 
   Person({required this.id, required this.name, required this.phone, required this.role});
 
@@ -116,7 +115,7 @@ class WorkLog {
 class CashEntry {
   final String title;
   final double amount;
-  final String type; // 'Kharcha' or 'Jama'
+  final String type;
   final String date;
 
   CashEntry({required this.title, required this.amount, required this.type, required this.date});
@@ -130,7 +129,6 @@ class CashEntry {
   );
 }
 
-// Main Navigation Screen
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
@@ -317,162 +315,104 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // Option 3: Google Sheet Auto-Sync Function
-  void _syncToGoogleSheet() async {
-    final sheetUrlCtrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Google Sheet Auto-Sync'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Apna Google Apps Script Web App URL yahan daalein:', style: TextStyle(fontSize: 13, color: Colors.grey)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: sheetUrlCtrl,
-              decoration: const InputDecoration(hintText: 'https://script.google.com/macros/s/...', border: OutlineInputBorder()),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
-            onPressed: () async {
-              if (sheetUrlCtrl.text.isEmpty) return;
-              Navigator.pop(context);
-              
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (_) => const Center(child: CircularProgressIndicator()),
+  // Safe Contact Picker with Permission check to prevent minimizing crash
+  void _addMultiplePersonsDialog(String role) async {
+    try {
+      var status = await Permission.contacts.status;
+      if (!status.isGranted) {
+        status = await Permission.contacts.request();
+      }
+
+      if (status.isGranted) {
+        final Contact? contact = await FlutterContacts.openExternalPick();
+        if (contact != null) {
+          String name = contact.displayName;
+          String phone = '';
+          if (contact.phones.isNotEmpty) {
+            phone = contact.phones.first.number.replaceAll(RegExp(r'\D'), '');
+          }
+
+          if (name.isNotEmpty && phone.isNotEmpty) {
+            setState(() {
+              final newP = Person(
+                id: DateTime.now().toString() + phone,
+                name: name,
+                phone: phone,
+                role: role,
               );
-
-              try {
-                final payload = {
-                  'tractors': vehicles.where((v) => v.type == 'Tractor').map((v) => {'name': v.name, 'number': v.number, 'rate': v.defaultRate}).toList(),
-                  'jcbs': vehicles.where((v) => v.type == 'JCB').map((v) => {'name': v.name, 'number': v.number, 'rate': v.defaultRate}).toList(),
-                  'drivers': workers.map((w) => {'name': w.name, 'phone': w.phone}).toList(),
-                  'parties': clients.map((c) => {'name': c.name, 'phone': c.phone}).toList(),
-                  'khata': cashBook.map((k) => {'title': k.title, 'amount': k.amount, 'type': k.type, 'date': k.date}).toList(),
-                  'daily_work_logs': logs.map((l) => {
-                    'date': l.date,
-                    'driver': l.driverName,
-                    'party': l.clientName,
-                    'hours': l.hours,
-                    'machine': l.vehicleName,
-                    'amount': l.totalAmount
-                  }).toList(),
-                };
-
-                final response = await http.post(
-                  Uri.parse(sheetUrlCtrl.text),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode(payload),
-                );
-
-                Navigator.pop(context);
-                if (response.statusCode == 200) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Google Sheet Sync Successful!')));
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sync Failed! Check URL.')));
-                }
-              } catch (e) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+              if (role == 'Worker') {
+                workers.add(newP);
+              } else {
+                clients.add(newP);
               }
-            },
-            child: const Text('Sync Now'),
-          ),
-        ],
-      ),
-    );
+            });
+            _saveData();
+          }
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Contacts permission is required to pick contacts!')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error picking contact: $e')),
+      );
+    }
   }
 
-  // Option 1: Export All Data via WhatsApp
-  void _exportAllDataViaWhatsApp() async {
-    double totalJama = cashBook.where((c) => c.type == 'Jama').fold(0.0, (sum, c) => sum + c.amount);
-    double totalKharcha = cashBook.where((c) => c.type == 'Kharcha').fold(0.0, (sum, c) => sum + c.amount);
+  // Fixed Direct WhatsApp Launcher
+  void _sendWhatsApp(WorkLog log) async {
+    final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
+    final msg = '*Tractor/JCB Work Slip*\n\n'
+        'Party: *${log.clientName}*\n'
+        'Date: ${log.date}\n'
+        'Machine: ${log.vehicleName}\n'
+        'Driver: ${log.driverName}\n'
+        'Total Time: *${log.hours} Hours*\n'
+        'Rate: ₹${log.rate}/hr\n'
+        '-------------------------\n'
+        '💰 *Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}*';
 
-    String report = '📊 *LxH ONE - Complete Business Report*\n\n';
-    report += '🚜 *Machines Count:* ${vehicles.length}\n';
-    report += '👥 *Drivers & Parties:* ${workers.length + clients.length}\n';
-    report += '📝 *Total Work Logs:* ${logs.length}\n';
-    report += '💰 *Total Jama (Kamai):* ₹${totalJama.toStringAsFixed(0)}\n';
-    report += '💸 *Total Kharcha:* ₹${totalKharcha.toStringAsFixed(0)}\n\n';
+    final uri = Uri.parse('https://wa.me/91$cleanPhone?text=${Uri.encodeComponent(msg)}');
     
-    report += '--- *Recent Work Logs* ---\n';
-    for (var l in logs.take(5)) {
-      report += '• ${l.date} | ${l.clientName} | ${l.vehicleName} | ${l.hours} hrs | ₹${l.totalAmount.toStringAsFixed(0)}\n';
-    }
-
-    final uri = Uri.parse('https://wa.me/?text=${Uri.encodeComponent(report)}');
     try {
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('WhatsApp could not be opened!')),
+        );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
     }
   }
 
-  // Option 2 & Combined Backup Dialog
-  void _showBackupRestoreDialog() {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Backup, Export & Sync (1, 2, 3 All)'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Option 1: WhatsApp Export
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-              icon: const Icon(Icons.share, size: 16),
-              label: const Text('1. Export All via WhatsApp'),
-              onPressed: () {
-                Navigator.pop(context);
-                _exportAllDataViaWhatsApp();
-              },
-            ),
-            const SizedBox(height: 10),
-            // Option 2: JSON Backup Copy
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
-              icon: const Icon(Icons.copy, size: 16),
-              label: const Text('2. Copy JSON Backup'),
-              onPressed: () {
-                final data = {
-                  'vehicles': vehicles.map((v) => v.toJson()).toList(),
-                  'workers': workers.map((w) => w.toJson()).toList(),
-                  'clients': clients.map((c) => c.toJson()).toList(),
-                  'logs': logs.map((l) => l.toJson()).toList(),
-                  'cashBook': cashBook.map((c) => c.toJson()).toList(),
-                };
-                Clipboard.setData(ClipboardData(text: jsonEncode(data)));
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Full JSON Backup Copied!')));
-              },
-            ),
-            const SizedBox(height: 10),
-            // Option 3: Google Sheet Sync
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
-              icon: const Icon(Icons.cloud_upload, size: 16),
-              label: const Text('3. Sync to Google Sheet'),
-              onPressed: () {
-                Navigator.pop(context);
-                _syncToGoogleSheet();
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-        ],
-      ),
+  void _sendSMS(WorkLog log) async {
+    final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
+    final message = 'Namaste ${log.clientName}, aapke yahan ${log.date} ko ${log.vehicleName} ne ${log.hours} ghante kaam kiya @ ₹${log.rate}/hr. Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}. - LxH ONE';
+    
+    final uri = Uri(
+      scheme: 'sms',
+      path: cleanPhone,
+      queryParameters: {'body': message},
     );
+
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        final fallbackUri = Uri.parse('sms:$cleanPhone?body=${Uri.encodeComponent(message)}');
+        await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open SMS: $e')),
+      );
+    }
   }
 
   @override
@@ -490,13 +430,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         title: const Text('LxH ONE', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFE65100),
         elevation: 2,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_backup_restore, color: Colors.white),
-            tooltip: 'Backup & Sync',
-            onPressed: _showBackupRestoreDialog,
-          ),
-        ],
       ),
       body: screens[_currentIndex],
       bottomNavigationBar: NavigationBar(
@@ -838,106 +771,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         ],
       ),
     );
-  }
-
-  void _addMultiplePersonsDialog(String role) async {
-    try {
-      List<Contact> contacts = await FlutterContacts.openExternalPick() as List<Contact>;
-      if (contacts.isNotEmpty) {
-        setState(() {
-          for (var contact in contacts) {
-            if (contact.phones.isNotEmpty) {
-              String name = contact.displayName;
-              String phone = contact.phones.first.number.replaceAll(RegExp(r'\D'), '');
-              final newP = Person(id: DateTime.now().toString() + phone, name: name, phone: phone, role: role);
-              if (role == 'Worker') {
-                workers.add(newP);
-              } else {
-                clients.add(newP);
-              }
-            }
-          }
-        });
-        _saveData();
-      }
-    } catch (e) {
-      try {
-        final contact = await FlutterContacts.openExternalPick();
-        if (contact != null && contact.phones.isNotEmpty) {
-          setState(() {
-            final newP = Person(
-              id: DateTime.now().toString(),
-              name: contact.displayName,
-              phone: contact.phones.first.number.replaceAll(RegExp(r'\D'), ''),
-              role: role,
-            );
-            if (role == 'Worker') {
-              workers.add(newP);
-            } else {
-              clients.add(newP);
-            }
-          });
-          _saveData();
-        }
-      } catch (err) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $err')),
-        );
-      }
-    }
-  }
-
-  void _sendSMS(WorkLog log) async {
-    final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
-    final message = 'Namaste ${log.clientName}, aapke yahan ${log.date} ko ${log.vehicleName} ne ${log.hours} ghante kaam kiya @ ₹${log.rate}/hr. Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}. - LxH ONE';
-    
-    final uri = Uri(
-      scheme: 'sms',
-      path: cleanPhone,
-      queryParameters: {'body': message},
-    );
-
-    try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        final fallbackUri = Uri.parse('sms:$cleanPhone?body=${Uri.encodeComponent(message)}');
-        await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open SMS: $e')),
-      );
-    }
-  }
-
-  void _sendWhatsApp(WorkLog log) async {
-    final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
-    final msg = '*Tractor/JCB Work Slip*\n\n'
-        'Party: *${log.clientName}*\n'
-        'Date: ${log.date}\n'
-        'Machine: ${log.vehicleName}\n'
-        'Driver: ${log.driverName}\n'
-        'Total Time: *${log.hours} Hours*\n'
-        'Rate: ₹${log.rate}/hr\n'
-        '-------------------------\n'
-        '💰 *Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}*';
-
-    final uri = Uri.parse('https://wa.me/91$cleanPhone?text=${Uri.encodeComponent(msg)}');
-    
-    try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('WhatsApp is not installed or could not be opened!')),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error launching WhatsApp: $e')),
-      );
-    }
   }
 }
 
