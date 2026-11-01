@@ -123,8 +123,9 @@ class GoogleDriveBackupService {
 
   static Future<void> backup(
     GoogleSignInAccount account,
-    Map<String, dynamic> data,
-  ) async {
+    Map<String, dynamic> data, {
+    bool createNewVersion = false,
+  }) async {
     _ensureConfigured();
     final client = http.Client();
     try {
@@ -139,7 +140,13 @@ class GoogleDriveBackupService {
       final date = '${now.year.toString().padLeft(4, '0')}-'
           '${now.month.toString().padLeft(2, '0')}-'
           '${now.day.toString().padLeft(2, '0')}';
-      final fileName = 'LxH ONE Backup $date.json';
+      final recoveryTime = now.hour.toString().padLeft(2, '0') + '-' +
+          now.minute.toString().padLeft(2, '0') + '-' +
+          now.second.toString().padLeft(2, '0') + '-' +
+          now.millisecond.toString().padLeft(3, '0');
+      final fileName = createNewVersion
+          ? 'LxH ONE Backup ' + date + ' Local Recovery ' + recoveryTime + '.json'
+          : 'LxH ONE Backup ' + date + '.json';
       final backupPayload = <String, dynamic>{
         'schemaVersion': 1,
         'accountEmail': account.email,
@@ -295,6 +302,8 @@ void lxhDailyBackupDispatcher() {
       if (accessToken == null || accessToken.isEmpty) return false;
       final prefix = accountStoragePrefix(email);
       final previouslyInitialized = prefs.getBool(prefix + 'account_initialized') ?? false;
+      final hasUnsyncedLocalChanges =
+          prefs.getBool(prefix + 'unsynced_local_changes') ?? false;
 
       // If an earlier foreground restore failed, complete it before uploading
       // anything so an empty device cannot overwrite a real cloud backup.
@@ -306,7 +315,9 @@ void lxhDailyBackupDispatcher() {
         if (remoteBackup == null && !previouslyInitialized) return true;
 
         final remoteData = remoteBackup?['data'];
-        if (remoteData is Map) {
+        // When this phone has newer unsynced work, preserve it locally and
+        // upload a separate recovery file rather than replacing the Drive file.
+        if (remoteData is Map && !hasUnsyncedLocalChanges) {
           for (final entry in remoteData.entries) {
             final key = entry.key.toString();
             if (!backupPreferenceKeys.contains(key)) continue;
@@ -337,7 +348,12 @@ void lxhDailyBackupDispatcher() {
         final value = prefs.get(prefix + key);
         if (value != null) snapshot[key] = value;
       }
-      await GoogleDriveBackupService.backup(account, snapshot);
+      await GoogleDriveBackupService.backup(
+        account,
+        snapshot,
+        createNewVersion: hasUnsyncedLocalChanges,
+      );
+      await prefs.setBool(prefix + 'unsynced_local_changes', false);
       return true;
     } catch (_) {
       return false;
