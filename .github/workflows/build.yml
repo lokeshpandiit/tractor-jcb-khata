@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, v3 ]
   workflow_dispatch:
 
 jobs:
@@ -25,25 +25,24 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Clean Android, Fix Kotlin 1.9.24 & Launcher
+      - name: Preserve app manifest and generate Android wrapper
+        shell: bash
         run: |
+          cp android/app/src/main/AndroidManifest.xml /tmp/lxh-android-manifest.xml
           rm -rf android
           flutter create . --platforms android --project-name tractor_jcb_khata
-          
-          # Force Kotlin version to 1.9.24 in settings.gradle
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/g' android/settings.gradle
-
-          # Fix App Label in AndroidManifest.xml
-          sed -i 's/android:label="[^"]*"/android:label="LxH ONE"/g' android/app/src/main/AndroidManifest.xml
+          cp /tmp/lxh-android-manifest.xml android/app/src/main/AndroidManifest.xml
+          grep -q 'android:label="LxH ONE"' android/app/src/main/AndroidManifest.xml
 
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Build Lightweight APK
+      - name: Build Release APK
         run: flutter build apk --release --split-per-abi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LxH-ONE-APK
+          name: LxH-ONE-V3-APK
           path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
