@@ -73,7 +73,12 @@ class GoogleDriveBackupService {
     _ensureConfigured();
     final client = http.Client();
     try {
-      final headers = await account.authHeaders;
+      final auth = await account.authentication;
+      final accessToken = auth.accessToken;
+      if (accessToken == null || accessToken.isEmpty) {
+        throw StateError('Google Drive authorization is missing. Sign in again to grant Drive access.');
+      }
+      final headers = <String, String>{'Authorization': 'Bearer $accessToken'};
       final folderId = await _findOrCreateBackupFolder(client, headers);
       final listUri = Uri.https('www.googleapis.com', '/drive/v3/files', {
         'q': "'$folderId' in parents and mimeType = 'application/json' and trashed = false",
@@ -121,7 +126,12 @@ class GoogleDriveBackupService {
     _ensureConfigured();
     final client = http.Client();
     try {
-      final headers = await account.authHeaders;
+      final auth = await account.authentication;
+      final accessToken = auth.accessToken;
+      if (accessToken == null || accessToken.isEmpty) {
+        throw StateError('Google Drive authorization is missing. Sign in again to grant Drive access.');
+      }
+      final headers = <String, String>{'Authorization': 'Bearer $accessToken'};
       final folderId = await _findOrCreateBackupFolder(client, headers);
       final now = DateTime.now();
       final date = '${now.year.toString().padLeft(4, '0')}-'
@@ -143,7 +153,7 @@ class GoogleDriveBackupService {
         'fields': 'files(id,name)',
       });
       final listResponse = await client.get(listUri, headers: headers);
-      _checkResponse(listResponse, 'Could not check today\\'s Drive backup');
+      _checkResponse(listResponse, 'Could not check today\'s Drive backup');
       final listJson = jsonDecode(listResponse.body) as Map<String, dynamic>;
       final existing = (listJson['files'] as List<dynamic>? ?? <dynamic>[]);
       final existingId = existing.isEmpty
@@ -164,7 +174,7 @@ class GoogleDriveBackupService {
           },
           body: jsonEncode(backupPayload),
         );
-        _checkResponse(response, 'Could not update today\\'s Drive backup');
+        _checkResponse(response, 'Could not update today\'s Drive backup');
       } else {
         final boundary = 'lxh_${Random.secure().nextInt(1 << 32)}';
         final metadata = <String, dynamic>{
@@ -278,6 +288,9 @@ void lxhDailyBackupDispatcher() {
         return false;
       }
 
+      final auth = await account.authentication;
+      final accessToken = auth.accessToken;
+      if (accessToken == null || accessToken.isEmpty) return false;
       final prefix = accountStoragePrefix(email);
       final snapshot = <String, dynamic>{};
       for (final key in backupPreferenceKeys) {
