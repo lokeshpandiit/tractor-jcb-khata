@@ -10,6 +10,22 @@ import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:googleapis/drive/v3.dart' as gdrive;
+import 'package:http/http.dart' as http;
+
+class _GoogleAuthClient extends http.BaseClient {
+  final String token;
+  final http.Client _inner = http.Client();
+  _GoogleAuthClient(this.token);
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    request.headers['Authorization'] = 'Bearer $token';
+    return _inner.send(request);
+  }
+  @override
+  void close() => _inner.close();
+}
 
 void main() {
   runApp(const FleetKhataApp());
@@ -147,6 +163,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   List<WorkLog> logs = [];
   List<CashEntry> cashBook = [];
   List<LedgerEntry> ledgerEntries = [];
+
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: [gdrive.DriveApi.driveFileScope],
+    serverClientId: '975729106198-4bv34dncp6tk3hov5lbbg8a4psp2r6q9.apps.googleusercontent.com',
+  );
 
   @override
   void initState() {
