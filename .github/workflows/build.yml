@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, final-khata-v2 ]
   workflow_dispatch:
 
 jobs:
@@ -25,21 +25,65 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Clean Android, Fix Kotlin 1.9.24 & Launcher
+      # Recreate the Android wrapper because this repository keeps only the
+      # project-specific Android files. Re-apply the app permissions after
+      # scaffold generation so they cannot silently disappear from the APK.
+      - name: Generate Android scaffold and restore LxH permissions
         run: |
           rm -rf android
           flutter create . --platforms android --project-name tractor_jcb_khata
-          
-          # Force Kotlin version to 1.9.24 in settings.gradle
+
+          # Keep Kotlin compatible with Flutter 3.24 / the Android plugin.
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/g' android/settings.gradle
 
-          # Fix App Label in AndroidManifest.xml
-          sed -i 's/android:label="[^"]*"/android:label="LxH ONE"/g' android/app/src/main/AndroidManifest.xml
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text(encoding="utf-8")
+
+          text = re.sub(r'android:label="[^"]*"', 'android:label="LxH ONE"', text, count=1)
+
+          # The app explicitly requests Contacts permission before using the
+          # Android contact selection flow. Do not add unrelated SMS/call/storage
+          # permissions: SMS and phone actions only open external apps.
+          permission = '    <uses-permission android:name="android.permission.READ_CONTACTS" />'
+          if "android.permission.READ_CONTACTS" not in text:
+              text = text.replace("<application", permission + "\\n\\n    <application", 1)
+
+          queries = """    <queries>
+                  <intent>
+                      <action android:name="android.intent.action.VIEW" />
+                      <data android:scheme="https" />
+                  </intent>
+                  <intent>
+                      <action android:name="android.intent.action.SENDTO" />
+                      <data android:scheme="sms" />
+                  </intent>
+                  <intent>
+                      <action android:name="android.intent.action.SENDTO" />
+                      <data android:scheme="smsto" />
+                  </intent>
+                  <package android:name="com.whatsapp" />
+                  <package android:name="com.whatsapp.w4b" />
+              </queries>
+          """
+          if "<queries>" not in text:
+              text = text.replace("</manifest>", queries + "\\n</manifest>")
+          manifest.write_text(text, encoding="utf-8")
+
+          # Fail the workflow early if the permission was not written.
+          assert "android.permission.READ_CONTACTS" in manifest.read_text(encoding="utf-8")
+          PY
 
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Build Lightweight APK
+      - name: Analyze Dart Code
+        run: flutter analyze --no-pub
+
+      - name: Build Release APKs
         run: flutter build apk --release --split-per-abi
 
       - name: Upload APK Artifact
