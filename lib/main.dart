@@ -767,7 +767,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             color: Colors.white,
             child: TabBar(
               labelColor: const Color(0xFFE65100),
-              tabs: const [Tab(text: 'Len-Den'), Tab(text: 'Customer Bकाया'), Tab(text: 'Cash Book')],
+              tabs: const [Tab(text: 'Len-Den'), Tab(text: 'ग्राहक बकाया'), Tab(text: 'Cash Book')],
             ),
           ),
           Expanded(child: TabBarView(children: [
@@ -859,7 +859,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       padding: const EdgeInsets.all(16),
       children: [
         Card(color: Colors.orange.shade50, child: ListTile(
-          title: const Text('Total Customer Bकाया', style: TextStyle(fontWeight: FontWeight.bold)),
+          title: const Text('Total ग्राहक बकाया', style: TextStyle(fontWeight: FontWeight.bold)),
           trailing: Text('₹${totalOutstanding.toStringAsFixed(0)}',
             style: const TextStyle(fontSize: 20, color: Colors.deepOrange, fontWeight: FontWeight.bold)),
         )),
@@ -903,7 +903,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         content: SizedBox(width: double.maxFinite, height: 380, child: ListView(children: [
           Text('Total Work Bill: ₹${bill.toStringAsFixed(0)}'),
           Text('Total Jama: ₹${paid.toStringAsFixed(0)}'),
-          Text('Bकाया: ₹${(due > 0 ? due : 0).toStringAsFixed(0)}',
+          Text('बकाया: ₹${(due > 0 ? due : 0).toStringAsFixed(0)}',
               style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
           const Divider(),
           const Text('Work Records', style: TextStyle(fontWeight: FontWeight.bold)),
