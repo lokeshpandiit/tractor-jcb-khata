@@ -4,10 +4,14 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter/services.dart';
+import 'services/google_drive_backup.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await initializeLxhDailyBackup();
   runApp(const FleetKhataApp());
 }
 
@@ -77,12 +81,12 @@ class Person {
   };
 
   factory Person.fromJson(Map<String, dynamic> json) => Person(
-    id: json['id'] ?? '',
-    name: json['name'] ?? '',
-    phone: json['phone'] ?? '',
-    role: json['role'] ?? '',
+    id: json['id']?.toString() ?? '',
+    name: json['name']?.toString() ?? '',
+    phone: json['phone']?.toString() ?? '',
+    role: json['role']?.toString() ?? '',
     salaryAmount: (json['salaryAmount'] ?? 0).toDouble(),
-    salaryType: json['salaryType'] ?? 'Monthly',
+    salaryType: json['salaryType']?.toString() ?? 'Monthly',
   );
 }
 
@@ -94,6 +98,8 @@ class WorkLog {
   final String driverName;
   final String clientName;
   final String clientPhone;
+  final String clientId;
+  final String vehicleNumber;
   final double hours;
   final double rate;
   final double totalAmount;
@@ -106,6 +112,8 @@ class WorkLog {
     required this.driverName,
     required this.clientName,
     required this.clientPhone,
+    this.clientId = '',
+    this.vehicleNumber = '',
     required this.hours,
     required this.rate,
     required this.totalAmount,
@@ -114,6 +122,7 @@ class WorkLog {
   Map<String, dynamic> toJson() => {
     'id': id, 'date': date, 'vehicleName': vehicleName, 'vehicleType': vehicleType,
     'driverName': driverName, 'clientName': clientName, 'clientPhone': clientPhone,
+    'clientId': clientId, 'vehicleNumber': vehicleNumber,
     'hours': hours, 'rate': rate, 'totalAmount': totalAmount
   };
 
@@ -125,6 +134,8 @@ class WorkLog {
     driverName: json['driverName'] ?? '',
     clientName: json['clientName'] ?? '',
     clientPhone: json['clientPhone'] ?? '',
+    clientId: json['clientId'] ?? '',
+    vehicleNumber: json['vehicleNumber'] ?? '',
     hours: (json['hours'] ?? 0).toDouble(),
     rate: (json['rate'] ?? 0).toDouble(),
     totalAmount: (json['totalAmount'] ?? 0).toDouble(),
@@ -132,19 +143,70 @@ class WorkLog {
 }
 
 class CashEntry {
+  final String id;
   final String title;
   final double amount;
   final String type;
   final String date;
+  final String partyId;
+  final String partyName;
 
-  CashEntry({required this.title, required this.amount, required this.type, required this.date});
+  CashEntry({
+    String? id,
+    required this.title,
+    required this.amount,
+    required this.type,
+    required this.date,
+    this.partyId = '',
+    this.partyName = '',
+  }) : id = id ?? DateTime.now().microsecondsSinceEpoch.toString();
 
-  Map<String, dynamic> toJson() => {'title': title, 'amount': amount, 'type': type, 'date': date};
+  Map<String, dynamic> toJson() => {
+    'id': id, 'title': title, 'amount': amount, 'type': type, 'date': date,
+    'partyId': partyId, 'partyName': partyName,
+  };
+
   factory CashEntry.fromJson(Map<String, dynamic> json) => CashEntry(
+    id: json['id']?.toString(),
     title: json['title'] ?? '',
     amount: (json['amount'] ?? 0).toDouble(),
     type: json['type'] ?? '',
     date: json['date'] ?? '',
+    partyId: json['partyId'] ?? '',
+    partyName: json['partyName'] ?? '',
+  );
+}
+
+
+class AdvanceRequest {
+  final String id;
+  final String name;
+  final double amount;
+  final String date;
+  final String note;
+
+  AdvanceRequest({
+    required this.id,
+    required this.name,
+    required this.amount,
+    required this.date,
+    required this.note,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'amount': amount,
+    'date': date,
+    'note': note,
+  };
+
+  factory AdvanceRequest.fromJson(Map<String, dynamic> json) => AdvanceRequest(
+    id: json['id']?.toString() ?? '',
+    name: json['name']?.toString() ?? '',
+    amount: (json['amount'] ?? 0).toDouble(),
+    date: json['date']?.toString() ?? '',
+    note: json['note']?.toString() ?? '',
   );
 }
 
@@ -176,13 +238,22 @@ class DriverLedgerEntry {
 
   factory DriverLedgerEntry.fromJson(Map<String, dynamic> json) =>
       DriverLedgerEntry(
-        id: json['id'] ?? '',
-        driverId: json['driverId'] ?? '',
-        type: json['type'] ?? 'Advance',
+        id: json['id']?.toString() ?? '',
+        driverId: json['driverId']?.toString() ?? '',
+        type: json['type']?.toString() ?? 'Advance',
         amount: (json['amount'] ?? 0).toDouble(),
-        reason: json['reason'] ?? '',
-        date: json['date'] ?? '',
+        reason: json['reason']?.toString() ?? '',
+        date: json['date']?.toString() ?? '',
       );
+}
+
+
+String _normalizePhone(String value) {
+  var digits = value.replaceAll(RegExp(r'[^0-9]'), '');
+  if (digits.startsWith('00')) digits = digits.substring(2);
+  if (digits.startsWith('91') && digits.length == 12) digits = digits.substring(2);
+  if (digits.startsWith('0') && digits.length == 11) digits = digits.substring(1);
+  return digits;
 }
 
 class MainNavigationScreen extends StatefulWidget {
@@ -201,18 +272,212 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   List<Person> clients = [];
   List<WorkLog> logs = [];
   List<CashEntry> cashBook = [];
+  List<AdvanceRequest> advanceRequests = [];
   List<DriverLedgerEntry> driverLedger = [];
+
+  GoogleSignInAccount? _activeGoogleAccount;
+  bool _authReady = false;
+  bool _authBusy = false;
+  String? _authError;
+  bool _driveRestoreFailed = false;
+  bool _offlineMode = false;
+
+  String _accountKey(String key) {
+    final email = _activeGoogleAccount?.email;
+    return email == null ? key : accountStoragePrefix(email) + key;
+  }
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _initializeAccount();
   }
+
+  Future<void> _initializeAccount() async {
+    try {
+      final account = await GoogleDriveBackupService.signInSilently();
+      if (account != null) {
+        await _activateAccount(account);
+      }
+    } catch (e) {
+      _authError = e.toString();
+    } finally {
+      if (mounted) setState(() => _authReady = true);
+    }
+  }
+
+  Future<void> _useOfflineMode() async {
+    setState(() {
+      _offlineMode = true;
+      _authError = null;
+    });
+    await _loadData();
+  }
+
+  Future<void> _signInGoogle() async {
+    if (!GoogleDriveBackupService.isConfigured) {
+      setState(() => _authError =
+          'Google OAuth is not configured yet. Add GOOGLE_SERVER_CLIENT_ID in GitHub Actions and register this Android app in Google Cloud.');
+      return;
+    }
+    setState(() {
+      _authBusy = true;
+      _authError = null;
+    });
+    try {
+      final account = await GoogleDriveBackupService.signIn();
+      if (account == null) {
+        _authError = 'Google sign-in was cancelled.';
+      } else {
+        await _activateAccount(account);
+      }
+    } catch (e) {
+      _authError = e.toString();
+    } finally {
+      if (mounted) setState(() {
+        _authBusy = false;
+        _authReady = true;
+      });
+    }
+  }
+
+  Future<void> _activateAccount(GoogleSignInAccount account) async {
+    final prefs = await SharedPreferences.getInstance();
+    final prefix = accountStoragePrefix(account.email);
+    final scopedKeys = backupPreferenceKeys.map((key) => prefix + key);
+    final hasScopedData = scopedKeys.any(prefs.containsKey);
+    Map<String, dynamic>? cloudBackup;
+    _driveRestoreFailed = false;
+
+    try {
+      cloudBackup = await GoogleDriveBackupService.restoreLatest(account);
+    } catch (e) {
+      _driveRestoreFailed = true;
+      _authError = 'Google account signed in, but Drive restore failed: ' + e.toString();
+    }
+
+    final cloudData = cloudBackup?['data'];
+    if (cloudData is Map) {
+      for (final entry in cloudData.entries) {
+        final key = entry.key.toString();
+        if (!backupPreferenceKeys.contains(key)) continue;
+        final value = entry.value;
+        final destinationKey = prefix + key;
+        if (value is String) {
+          await prefs.setString(destinationKey, value);
+        } else if (value is bool) {
+          await prefs.setBool(destinationKey, value);
+        } else if (value is int) {
+          await prefs.setInt(destinationKey, value);
+        } else if (value is double) {
+          await prefs.setDouble(destinationKey, value);
+        } else if (value is List<String>) {
+          await prefs.setStringList(destinationKey, value);
+        }
+      }
+    } else if (cloudBackup == null &&
+        !hasScopedData &&
+        !(prefs.getBool('lxh_has_linked_google_account') ?? false)) {
+      // First-ever Google account on this installation: preserve legacy local
+      // data by moving it into that account's isolated namespace.
+      for (final key in backupPreferenceKeys) {
+        final legacyString = prefs.getString(key);
+        final legacyBool = prefs.getBool(key);
+        if (legacyString != null) {
+          await prefs.setString(prefix + key, legacyString);
+        } else if (legacyBool != null) {
+          await prefs.setBool(prefix + key, legacyBool);
+        }
+      }
+    }
+
+    await prefs.setString('active_google_email', account.email);
+    await prefs.setBool('lxh_has_linked_google_account', true);
+    await prefs.setBool(prefix + 'drive_restore_pending', _driveRestoreFailed);
+    if (!_driveRestoreFailed) {
+      await prefs.setBool(prefix + 'account_initialized', true);
+    }
+    _activeGoogleAccount = account;
+    _offlineMode = false;
+    await _loadData();
+
+    // Do not upload local data after a failed restore. That could overwrite a
+    // valid remote backup with an incomplete local copy.
+    if (!_driveRestoreFailed) {
+      await _saveData();
+    }
+  }
+
+  Future<void> _changeGoogleAccount() async {
+    await _saveData();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('active_google_email');
+    await GoogleDriveBackupService.signOut();
+    if (!mounted) return;
+    setState(() {
+      _activeGoogleAccount = null;
+      _offlineMode = false;
+      vehicles = [];
+      workers = [];
+      clients = [];
+      logs = [];
+      cashBook = [];
+      advanceRequests = [];
+      driverLedger = [];
+      _authError = null;
+      _authReady = true;
+    });
+  }
+
+  Widget _buildLoginScreen() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.cloud_sync, size: 54, color: Color(0xFFE65100)),
+                const SizedBox(height: 12),
+                const Text('LxH ONE Account', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                const Text(
+                  'Sign in with Google to keep your Tractor, JCB, Worker, Party and Khata data in your own Google Drive backup.',
+                  textAlign: TextAlign.center,
+                ),
+                if (_authError != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_authError!, style: const TextStyle(color: Colors.red), textAlign: TextAlign.center),
+                ],
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _authBusy ? null : _signInGoogle,
+                    icon: const Icon(Icons.login),
+                    label: Text(_authBusy ? 'Please wait...' : 'Continue with Google'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _authBusy ? null : _useOfflineMode,
+                  child: const Text('Continue Without Google for Now'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
 
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     
-    final vehiclesString = prefs.getString('vehicles_data');
+    final vehiclesString = prefs.getString(_accountKey('vehicles_data'));
     if (vehiclesString != null) {
       final List decoded = jsonDecode(vehiclesString);
       vehicles = decoded.map((e) => Vehicle.fromJson(e)).toList();
@@ -224,7 +489,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ];
     }
 
-    final workersString = prefs.getString('workers_data');
+    final workersString = prefs.getString(_accountKey('workers_data'));
     if (workersString != null) {
       final List decoded = jsonDecode(workersString);
       workers = decoded.map((e) => Person.fromJson(e)).toList();
@@ -235,7 +500,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ];
     }
 
-    final clientsString = prefs.getString('clients_data');
+    final clientsString = prefs.getString(_accountKey('clients_data'));
     if (clientsString != null) {
       final List decoded = jsonDecode(clientsString);
       clients = decoded.map((e) => Person.fromJson(e)).toList();
@@ -246,38 +511,289 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ];
     }
 
-    final logsString = prefs.getString('logs_data');
+    final logsString = prefs.getString(_accountKey('logs_data'));
     if (logsString != null) {
       final List decoded = jsonDecode(logsString);
-      logs = decoded.map((e) => WorkLog.fromJson(e)).toList();
+      final loadedLogs = decoded.map((e) => WorkLog.fromJson(e)).toList();
+      logs = loadedLogs.map((log) {
+        if (log.clientId.isNotEmpty) return log;
+        final phone = _normalizePhone(log.clientPhone);
+        final phoneMatches = clients.where((p) =>
+          phone.isNotEmpty && _normalizePhone(p.phone) == phone
+        ).toList();
+        Person? match;
+        if (phoneMatches.length == 1) {
+          match = phoneMatches.first;
+        } else if (phoneMatches.isEmpty) {
+          final normalizedName = log.clientName.trim().toLowerCase();
+          final nameMatches = clients.where((p) =>
+            p.name.trim().toLowerCase() == normalizedName
+          ).toList();
+          if (nameMatches.length == 1) match = nameMatches.first;
+        }
+        return WorkLog(
+          id: log.id, date: log.date, vehicleName: log.vehicleName,
+          vehicleType: log.vehicleType, driverName: log.driverName,
+          clientName: log.clientName, clientPhone: log.clientPhone,
+          clientId: match?.id ?? '', vehicleNumber: log.vehicleNumber,
+          hours: log.hours, rate: log.rate, totalAmount: log.totalAmount,
+        );
+      }).toList();
     }
 
-    final cashString = prefs.getString('cash_data');
+    bool isLegacyAutoJama(CashEntry entry) {
+      if (entry.type != 'Jama' || entry.partyId.isNotEmpty) return false;
+      return logs.any((log) =>
+        entry.title == log.clientName + ' (' + log.vehicleName + ')' &&
+        entry.amount == log.totalAmount &&
+        entry.date == log.date
+      );
+    }
+
+    final cashString = prefs.getString(_accountKey('cash_data'));
+    final migrationDone = prefs.getBool(_accountKey('khata_migration_v2_done')) ?? false;
+    final archivedString = prefs.getString(_accountKey('legacy_auto_jama_data'));
+    final archivedEntries = archivedString == null
+        ? <CashEntry>[]
+        : (jsonDecode(archivedString) as List).map((e) => CashEntry.fromJson(e)).toList();
+
     if (cashString != null) {
       final List decoded = jsonDecode(cashString);
-      cashBook = decoded.map((e) => CashEntry.fromJson(e)).toList();
-    }
+      final loadedEntries = decoded.map((e) => CashEntry.fromJson(e)).toList();
+      cashBook = loadedEntries;
 
-    final driverLedgerString = prefs.getString('driver_ledger_data');
+      // A previous app revision archived every Jama entry, including real
+      // receipts. Recover genuine receipts from that archive, but leave only
+      // the exact old auto-generated bill rows archived.
+      final genuineArchivedReceipts = archivedEntries.where((entry) =>
+        entry.type == 'Jama' && !isLegacyAutoJama(entry)
+      ).toList();
+      for (final archivedReceipt in genuineArchivedReceipts) {
+        final alreadyPresent = cashBook.any((entry) =>
+          entry.id == archivedReceipt.id ||
+          (entry.title == archivedReceipt.title &&
+           entry.amount == archivedReceipt.amount &&
+           entry.date == archivedReceipt.date &&
+           entry.partyId == archivedReceipt.partyId)
+        );
+        if (!alreadyPresent) cashBook.add(archivedReceipt);
+      }
+
+      final legacyAutoJama = <CashEntry>[
+        ...archivedEntries.where(isLegacyAutoJama),
+        ...loadedEntries.where(isLegacyAutoJama),
+      ];
+      final uniqueLegacyAutoJama = <CashEntry>[];
+      for (final entry in legacyAutoJama) {
+        if (!uniqueLegacyAutoJama.any((saved) => saved.id == entry.id)) {
+          uniqueLegacyAutoJama.add(entry);
+        }
+      }
+      await prefs.setString(_accountKey('legacy_auto_jama_data'),
+          jsonEncode(uniqueLegacyAutoJama.map((e) => e.toJson()).toList()));
+
+      if (!migrationDone || genuineArchivedReceipts.isNotEmpty) {
+        cashBook.removeWhere(isLegacyAutoJama);
+        await prefs.setString(_accountKey('cash_data'),
+            jsonEncode(cashBook.map((e) => e.toJson()).toList()));
+      }
+    }
+    final advanceString = prefs.getString(_accountKey('advance_requests_data'));
+    if (advanceString != null) {
+      final List decoded = jsonDecode(advanceString);
+      advanceRequests = decoded.map((e) => AdvanceRequest.fromJson(e)).toList();
+    }
+    final driverLedgerString = prefs.getString(_accountKey('driver_ledger_data'));
     if (driverLedgerString != null) {
       final List decoded = jsonDecode(driverLedgerString);
       driverLedger = decoded.map((e) => DriverLedgerEntry.fromJson(e)).toList();
+    } else {
+      driverLedger = [];
     }
-
+    await prefs.setBool(_accountKey('khata_migration_v2_done'), true);
+    await prefs.setString(_accountKey('logs_data'), jsonEncode(logs.map((e) => e.toJson()).toList()));
     if (mounted) setState(() {});
   }
 
   Future<void> _saveData() async {
+    if (_activeGoogleAccount == null && !_offlineMode) return;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('vehicles_data', jsonEncode(vehicles.map((e) => e.toJson()).toList()));
-    await prefs.setString('workers_data', jsonEncode(workers.map((e) => e.toJson()).toList()));
-    await prefs.setString('clients_data', jsonEncode(clients.map((e) => e.toJson()).toList()));
-    await prefs.setString('logs_data', jsonEncode(logs.map((e) => e.toJson()).toList()));
-    await prefs.setString('cash_data', jsonEncode(cashBook.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('vehicles_data'), jsonEncode(vehicles.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('workers_data'), jsonEncode(workers.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('clients_data'), jsonEncode(clients.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('logs_data'), jsonEncode(logs.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('cash_data'), jsonEncode(cashBook.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('advance_requests_data'), jsonEncode(advanceRequests.map((e) => e.toJson()).toList()));
     await prefs.setString(
-      'driver_ledger_data',
+      _accountKey('driver_ledger_data'),
       jsonEncode(driverLedger.map((e) => e.toJson()).toList()),
     );
+    await prefs.setBool(_accountKey('khata_migration_v2_done'), true);
+    if (_activeGoogleAccount != null) await _backupToDrive();
+  }
+
+  Future<void> _backupToDrive() async {
+    final account = _activeGoogleAccount;
+    if (account == null || _driveRestoreFailed) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final prefix = accountStoragePrefix(account.email);
+      final snapshot = <String, dynamic>{};
+      for (final key in backupPreferenceKeys) {
+        final stringValue = prefs.getString(prefix + key);
+        final boolValue = prefs.getBool(prefix + key);
+        if (stringValue != null) {
+          snapshot[key] = stringValue;
+        } else if (boolValue != null) {
+          snapshot[key] = boolValue;
+        }
+      }
+      await GoogleDriveBackupService.backup(account, snapshot);
+      await prefs.setString('lxh_last_backup_' + account.email, DateTime.now().toIso8601String());
+      if (mounted) setState(() => _driveRestoreFailed = false);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Local data saved. Google Drive backup failed: ' + e.toString())),
+        );
+      }
+    }
+  }
+
+
+  String _defaultSmsTemplate() =>
+      'Namaste {partyName}, aapke yahan {date} ko {machineName} (No: {machineNumber}) ne {hours} ghante kaam kiya @ ₹{rate}/hr. Total Bill: ₹{totalBill}. - LxH ONE';
+
+  String _defaultWhatsAppTemplate() =>
+      '*Tractor/JCB Work Slip*\n\nParty: *{partyName}*\nDate: {date}\nMachine: {machineName}\nMachine No: {machineNumber}\nDriver: {driverName}\nTotal Time: *{hours} Hours*\nRate: ₹{rate}/hr\n-------------------------\n💰 *Total Bill: ₹{totalBill}*';
+
+  String _renderMessageTemplate(String template, WorkLog log) {
+    final values = <String, String>{
+      '{partyName}': log.clientName,
+      '{date}': log.date,
+      '{machineName}': log.vehicleName,
+      '{machineNumber}': log.vehicleNumber,
+      '{driverName}': log.driverName,
+      '{hours}': log.hours.toString(),
+      '{rate}': log.rate.toStringAsFixed(0),
+      '{totalBill}': log.totalAmount.toStringAsFixed(0),
+    };
+    var message = template;
+    for (final entry in values.entries) {
+      message = message.replaceAll(entry.key, entry.value);
+    }
+    return message;
+  }
+
+  Future<void> _openMessageSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final smsController = TextEditingController(
+      text: prefs.getString(_accountKey('sms_message_template')) ?? _defaultSmsTemplate(),
+    );
+    final whatsappController = TextEditingController(
+      text: prefs.getString(_accountKey('whatsapp_message_template')) ?? _defaultWhatsAppTemplate(),
+    );
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Message Settings'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Align(alignment: Alignment.centerLeft, child: Text('SMS Message', style: TextStyle(fontWeight: FontWeight.bold))),
+                TextField(controller: smsController, maxLines: 5, decoration: const InputDecoration(border: OutlineInputBorder())),
+                const SizedBox(height: 12),
+                const Align(alignment: Alignment.centerLeft, child: Text('WhatsApp Message', style: TextStyle(fontWeight: FontWeight.bold))),
+                TextField(controller: whatsappController, maxLines: 8, decoration: const InputDecoration(border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                const Text(
+                  'Available fields: {partyName}, {date}, {machineName}, {machineNumber}, {driverName}, {hours}, {rate}, {totalBill}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              await prefs.setString(_accountKey('sms_message_template'), smsController.text);
+              await prefs.setString(_accountKey('whatsapp_message_template'), whatsappController.text);
+              await _saveData();
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+            },
+            child: const Text('Save Messages'),
+          ),
+        ],
+      ),
+    );
+    smsController.dispose();
+    whatsappController.dispose();
+  }
+
+  void _addAdvanceRequestDialog() {
+    final nameController = TextEditingController();
+    final amountController = TextEditingController();
+    final noteController = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Advance Maanga'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Kisne advance maanga?')),
+              TextField(
+                controller: amountController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Advance Amount (₹)'),
+              ),
+              TextField(controller: noteController, decoration: const InputDecoration(labelText: 'Reason / Details (optional)')),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              final name = nameController.text.trim();
+              final amount = double.tryParse(amountController.text.trim()) ?? 0;
+              if (name.isEmpty || amount <= 0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Name aur valid advance amount bharein.')),
+                );
+                return;
+              }
+              setState(() {
+                advanceRequests.insert(0, AdvanceRequest(
+                  id: DateTime.now().microsecondsSinceEpoch.toString(),
+                  name: name,
+                  amount: amount,
+                  date: DateFormat('dd MMM yyyy').format(DateTime.now()),
+                  note: noteController.text.trim(),
+                ));
+              });
+              await _saveData();
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+              nameController.dispose();
+              amountController.dispose();
+              noteController.dispose();
+            },
+            child: const Text('Save Request'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _deleteAdvanceRequest(AdvanceRequest request) {
+    setState(() => advanceRequests.removeWhere((item) => item.id == request.id));
+    _saveData();
   }
 
   void _openWorkEntryModal(String vehicleType) {
@@ -291,13 +807,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         clients: clients,
         onSave: (log) {
           setState(() {
+            // A saved work record creates a bill/receivable, never a cash receipt.
             logs.insert(0, log);
-            cashBook.insert(0, CashEntry(
-              title: '${log.clientName} (${log.vehicleName})',
-              amount: log.totalAmount,
-              type: 'Jama',
-              date: log.date,
-            ));
           });
           _saveData();
         },
@@ -340,6 +851,24 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
             onPressed: () {
+              final hasDriverHistory = role == 'Worker' &&
+                  driverLedger.any((entry) => entry.driverId == p.id);
+              final hasPartyHistory = role != 'Worker' &&
+                  (logs.any((log) => log.clientId == p.id) ||
+                   cashBook.any((entry) => entry.partyId == p.id));
+              if (hasDriverHistory || hasPartyHistory) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      hasDriverHistory
+                          ? 'Is driver ka khata record hai. History bachane ke liye driver delete nahi kiya ja sakta.'
+                          : 'Is party ke work/payment records hain. History bachane ke liye party delete nahi ki ja sakti.',
+                    ),
+                  ),
+                );
+                return;
+              }
               setState(() {
                 if (role == 'Worker') {
                   workers.removeWhere((item) => item.id == p.id);
@@ -362,15 +891,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delete Entry?'),
-        content: Text('Kya aap ${log.clientName} ka ₹${log.totalAmount.toStringAsFixed(0)} ka record delete karna chahte hain?'),
+        content: Text('Kya aap ${log.clientName} ka ₹${log.totalAmount.toStringAsFixed(0)} ka work/bill record delete karna chahte hain? Payment history alag se surakshit rahegi.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
             onPressed: () {
               setState(() {
-                logs.removeAt(index);
-                cashBook.removeWhere((c) => c.title == '${log.clientName} (${log.vehicleName})' && c.amount == log.totalAmount && c.date == log.date);
+                logs.removeWhere((item) => item.id == log.id);
+                // A bill deletion must never delete a real cash transaction.
               });
               _saveData();
               Navigator.pop(context);
@@ -386,12 +915,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void _addMultiplePersonsDialog(String role) async {
     try {
       var status = await Permission.contacts.status;
+      if (!mounted) return;
       if (!status.isGranted) {
         status = await Permission.contacts.request();
+        if (!mounted) return;
       }
 
       if (status.isGranted) {
         final Contact? contact = await FlutterContacts.openExternalPick();
+        if (!mounted) return;
         if (contact != null) {
           String name = contact.displayName;
           String phone = '';
@@ -422,6 +954,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         );
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error picking contact: $e')),
       );
@@ -462,71 +995,59 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  String? _normalizedWhatsAppNumber(String rawPhone) {
-    var digits = rawPhone.replaceAll(RegExp(r'\D'), '');
-    if (digits.startsWith('00')) {
-      digits = digits.substring(2);
-    }
-    if (digits.length == 11 && digits.startsWith('0')) {
-      digits = digits.substring(1);
-    }
-    // A plain 10-digit number is treated as an Indian mobile number.
-    if (digits.length == 10) {
-      digits = '91$digits';
-    }
-    if (digits.length < 8 || digits.length > 15) return null;
-    return digits;
-  }
-
-  // WhatsApp launcher: normalize the country code before opening wa.me.
   Future<void> _sendWhatsApp(WorkLog log) async {
-    final phone = _normalizedWhatsAppNumber(log.clientPhone);
-    if (phone == null) {
+    var cleanPhone = _normalizePhone(log.clientPhone);
+    if (cleanPhone.length == 10) cleanPhone = '91' + cleanPhone;
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please check this phone number.')),
+        const SnackBar(content: Text('Party ka mobile number sahi nahi hai.')),
       );
       return;
     }
-
-    final msg = '*Tractor/JCB Work Slip*\n\n'
-        'Party: *${log.clientName}*\n'
-        'Date: ${log.date}\n'
-        'Machine: ${log.vehicleName}\n'
-        'Driver: ${log.driverName}\n'
-        'Total Time: *${log.hours} Hours*\n'
-        'Rate: ₹${log.rate}/hr\n'
-        '-------------------------\n'
-        '💰 *Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}*';
-
-    final uri = Uri.parse(
-      'https://wa.me/$phone?text=${Uri.encodeComponent(msg)}',
-    );
+    final prefs = await SharedPreferences.getInstance();
+    final template = prefs.getString(_accountKey('whatsapp_message_template')) ?? _defaultWhatsAppTemplate();
+    final message = _renderMessageTemplate(template, log);
+    final uri = Uri.parse('https://wa.me/' + cleanPhone + '?text=' + Uri.encodeComponent(message));
     try {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open WhatsApp: $e')),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('WhatsApp could not be opened: ' + e.toString())),
+      );
     }
   }
 
   Future<void> _sendSMS(WorkLog log) async {
-    final phone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
-    final message = 'Namaste ${log.clientName}, aapke yahan ${log.date} ko ${log.vehicleName} ne ${log.hours} ghante kaam kiya @ ₹${log.rate}/hr. Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}. - LxH ONE';
-    final uri = Uri(
-      scheme: 'smsto',
-      path: phone,
-      queryParameters: {'body': message},
-    );
-
+    final cleanPhone = _normalizePhone(log.clientPhone);
+    if (cleanPhone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Party ka mobile number sahi nahi hai.')),
+      );
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final template = prefs.getString(_accountKey('sms_message_template')) ?? _defaultSmsTemplate();
+    final message = _renderMessageTemplate(template, log);
     try {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } catch (e) {
-      if (mounted) {
+      await const MethodChannel('com.example.tractor_jcb_khata/sms').invokeMethod<bool>(
+        'openSms',
+        <String, String>{'phone': cleanPhone, 'message': message},
+      );
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('SMS app could not be opened: ' + (e.message ?? e.code))),
+      );
+    } on MissingPluginException {
+      final uri = Uri(
+        scheme: 'smsto',
+        path: cleanPhone,
+        queryParameters: <String, String>{'body': message},
+      );
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open SMS: $e')),
+          const SnackBar(content: Text('SMS app could not be opened.')),
         );
       }
     }
@@ -547,17 +1068,39 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         title: const Text('LxH ONE', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFE65100),
         elevation: 2,
+        actions: [
+          if (_activeGoogleAccount != null || _offlineMode)
+            IconButton(
+              tooltip: 'Message Settings',
+              onPressed: _openMessageSettings,
+              icon: const Icon(Icons.settings, color: Colors.white),
+            ),
+          if (_activeGoogleAccount != null)
+            IconButton(
+              tooltip: 'Change Google Account',
+              onPressed: _changeGoogleAccount,
+              icon: const Icon(Icons.account_circle, color: Colors.white),
+            ),
+          if (_offlineMode)
+            IconButton(
+              tooltip: 'Sign in with Google',
+              onPressed: _signInGoogle,
+              icon: const Icon(Icons.cloud_sync, color: Colors.white),
+            ),
+        ],
       ),
-      body: screens[_currentIndex],
-      bottomNavigationBar: NavigationBar(
+      body: !_authReady
+          ? const Center(child: CircularProgressIndicator())
+          : (_activeGoogleAccount == null && !_offlineMode ? _buildLoginScreen() : screens[_currentIndex]),
+      bottomNavigationBar: (_activeGoogleAccount == null && !_offlineMode) ? null : NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (idx) => setState(() => _currentIndex = idx),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.agriculture), label: 'Tractor'),
           NavigationDestination(icon: Icon(Icons.construction), label: 'JCB'),
-          NavigationDestination(icon: Icon(Icons.engineering), label: 'Drivers'),
+          NavigationDestination(icon: Icon(Icons.engineering), label: 'Worker'),
           NavigationDestination(icon: Icon(Icons.groups), label: 'Parties'),
-          NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: 'Khata/Cash'),
+          NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: 'Khata'),
         ],
       ),
     );
@@ -692,7 +1235,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                             ],
                           ),
                           const SizedBox(height: 4),
-                          Text('${log.vehicleName} | Driver: ${log.driverName}'),
+                          Text('${log.vehicleName} | No: ${log.vehicleNumber.isEmpty ? '—' : log.vehicleNumber} | Driver: ${log.driverName}'),
                           Text('Duration: ${log.hours} hrs @ ₹${log.rate}/hr', style: TextStyle(color: Colors.grey.shade700)),
                           const SizedBox(height: 8),
                           Align(
@@ -758,9 +1301,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         builder: (_) => DriverKhataScreen(
           driver: driver,
           entries: driverLedger,
-          onChanged: () {
-            _saveData();
-            if (mounted) setState(() {});
+          onChanged: () async {
+            await _saveData();
           },
         ),
       ),
@@ -816,95 +1358,285 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Widget _buildCashTab() {
-    double totalJama = cashBook.where((c) => c.type == 'Jama').fold(0.0, (sum, c) => sum + c.amount);
-    double totalKharcha = cashBook.where((c) => c.type == 'Kharcha').fold(0.0, (sum, c) => sum + c.amount);
-
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Card(
-          color: Colors.orange.shade50,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                Column(children: [
-                  const Text('Total Jama (Kamai)', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                  Text('₹${totalJama.toStringAsFixed(0)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green)),
-                ]),
-                Column(children: [
-                  const Text('Total Kharcha', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                  Text('₹${totalKharcha.toStringAsFixed(0)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
-                ]),
-              ],
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        children: [
+          const Material(
+            color: Colors.white,
+            child: TabBar(
+              labelColor: Color(0xFFE65100),
+              tabs: [Tab(text: 'Len-Den'), Tab(text: 'ग्राहक बकाया'), Tab(text: 'Cash Book')],
             ),
           ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('Kharcha / Cash Entry', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            OutlinedButton.icon(
-              onPressed: _addExpenseDialog,
-              icon: const Icon(Icons.remove_circle, color: Colors.red),
-              label: const Text('Add Kharcha'),
-            )
-          ],
-        ),
-        const SizedBox(height: 12),
-        ...cashBook.map((c) => ListTile(
-          leading: Icon(c.type == 'Jama' ? Icons.arrow_downward : Icons.arrow_upward, color: c.type == 'Jama' ? Colors.green : Colors.red),
-          title: Text(c.title),
-          subtitle: Text(c.date),
-          trailing: Text(
-            '${c.type == 'Jama' ? '+' : '-'} ₹${c.amount.toStringAsFixed(0)}',
-            style: TextStyle(fontWeight: FontWeight.bold, color: c.type == 'Jama' ? Colors.green : Colors.red),
-          ),
-        )),
-      ],
-    );
-  }
-
-  void _addExpenseDialog() {
-    final titleController = TextEditingController();
-    final amountController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Kharcha Add Karein'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: titleController, decoration: const InputDecoration(labelText: 'Detail (eg. Diesel)')),
-            TextField(controller: amountController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Amount (₹)')),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              if (amountController.text.isNotEmpty) {
-                setState(() {
-                  cashBook.insert(0, CashEntry(
-                    title: titleController.text.isEmpty ? 'Kharcha' : titleController.text,
-                    amount: double.tryParse(amountController.text) ?? 0,
-                    type: 'Kharcha',
-                    date: DateFormat('dd MMM yyyy').format(DateTime.now()),
-                  ));
-                });
-                _saveData();
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('Save'),
-          )
+          Expanded(child: TabBarView(children: [
+            _buildTransactionsTab(), _buildOutstandingTab(), _buildCashBookTab(),
+          ])),
         ],
       ),
     );
   }
+
+  double _partyBillTotal(String partyId) => logs
+      .where((log) => log.clientId == partyId)
+      .fold(0.0, (sum, log) => sum + log.totalAmount);
+
+  double _partyReceivedTotal(String partyId) => cashBook
+      .where((entry) => entry.type == 'Jama' && entry.partyId == partyId)
+      .fold(0.0, (sum, entry) => sum + entry.amount);
+
+  Widget _buildTransactionsTab() {
+    final totalJama = cashBook.where((c) => c.type == 'Jama').fold(0.0, (sum, c) => sum + c.amount);
+    final totalKharcha = cashBook.where((c) => c.type == 'Kharcha').fold(0.0, (sum, c) => sum + c.amount);
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(children: [
+          Expanded(child: _khataSummaryCard('Jama', totalJama, Colors.green)),
+          const SizedBox(width: 10),
+          Expanded(child: _khataSummaryCard('Kharcha', totalKharcha, Colors.red)),
+        ]),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(child: ElevatedButton.icon(
+            onPressed: () => _addTransactionDialog('Jama'),
+            icon: const Icon(Icons.add), label: const Text('Paisa Mila (Jama)'),
+          )),
+          const SizedBox(width: 8),
+          Expanded(child: OutlinedButton.icon(
+            onPressed: () => _addTransactionDialog('Kharcha'),
+            icon: const Icon(Icons.remove), label: const Text('Paisa Diya'),
+          )),
+        ]),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _addAdvanceRequestDialog,
+            icon: const Icon(Icons.request_quote),
+            label: const Text('Advance Maanga (Request Record)'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text('Advance Requests', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        if (advanceRequests.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Text('Abhi koi advance request record nahi hai.'),
+          )
+        else
+          ...advanceRequests.map((request) => Card(
+            child: ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFFFFF3E0),
+                child: Icon(Icons.request_quote, color: Color(0xFFE65100)),
+              ),
+              title: Text(request.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(request.note.isEmpty ? request.date : request.date + ' • ' + request.note),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('₹' + request.amount.toStringAsFixed(0),
+                    style: const TextStyle(color: Color(0xFFE65100), fontWeight: FontWeight.bold)),
+                  IconButton(
+                    tooltip: 'Delete request',
+                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    onPressed: () => _deleteAdvanceRequest(request),
+                  ),
+                ],
+              ),
+            ),
+          )),
+      ],
+    );
+  }
+
+  Widget _khataSummaryCard(String label, double amount, Color color) {
+    return Card(child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(children: [
+        Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        Text('₹${amount.toStringAsFixed(0)}',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+      ]),
+    ));
+  }
+
+  Widget _buildOutstandingTab() {
+    final partiesWithActivity = clients.where((party) =>
+      logs.any((log) => log.clientId == party.id) ||
+      cashBook.any((entry) => entry.partyId == party.id)
+    ).toList();
+    final totalOutstanding = partiesWithActivity.fold<double>(0.0, (sum, party) {
+      final due = _partyBillTotal(party.id) - _partyReceivedTotal(party.id);
+      return sum + (due > 0 ? due : 0);
+    });
+    final unlinkedLogs = logs.where((log) => log.clientId.isEmpty).toList();
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(color: Colors.orange.shade50, child: ListTile(
+          title: const Text('Total ग्राहक बकाया', style: TextStyle(fontWeight: FontWeight.bold)),
+          trailing: Text('₹${totalOutstanding.toStringAsFixed(0)}',
+            style: const TextStyle(fontSize: 20, color: Colors.deepOrange, fontWeight: FontWeight.bold)),
+        )),
+        const SizedBox(height: 8),
+        if (partiesWithActivity.isEmpty)
+          const Padding(padding: EdgeInsets.all(20), child: Text('Parties ke saved Work Records yahan dikhai denge.'))
+        else
+          ...partiesWithActivity.map((party) {
+            final bill = _partyBillTotal(party.id);
+            final paid = _partyReceivedTotal(party.id);
+            final due = bill - paid;
+            return Card(child: ListTile(
+              title: Text(party.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text('Bill ₹${bill.toStringAsFixed(0)}  •  Jama ₹${paid.toStringAsFixed(0)}'),
+              trailing: Text('₹${(due > 0 ? due : 0).toStringAsFixed(0)}',
+                style: TextStyle(fontWeight: FontWeight.bold, color: due > 0 ? Colors.red : Colors.green)),
+              onTap: () => _showPartyLedger(party),
+            ));
+          }),
+        if (unlinkedLogs.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Card(color: Colors.amber.shade50, child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text('${unlinkedLogs.length} purane Work Records kisi current Party se uniquely match nahi hue. Unka data surakshit hai, lekin Party-wise bकाया mein shamil nahi kiya gaya.'),
+          )),
+        ],
+      ],
+    );
+  }
+
+  void _showPartyLedger(Person party) {
+    final partyLogs = logs.where((log) => log.clientId == party.id).toList();
+    final payments = cashBook.where((entry) => entry.type == 'Jama' && entry.partyId == party.id).toList();
+    final bill = partyLogs.fold(0.0, (sum, log) => sum + log.totalAmount);
+    final paid = payments.fold(0.0, (sum, entry) => sum + entry.amount);
+    final due = bill - paid;
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(party.name),
+        content: SizedBox(width: double.maxFinite, height: 380, child: ListView(children: [
+          Text('Total Work Bill: ₹${bill.toStringAsFixed(0)}'),
+          Text('Total Jama: ₹${paid.toStringAsFixed(0)}'),
+          Text('बकाया: ₹${(due > 0 ? due : 0).toStringAsFixed(0)}',
+              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+          const Divider(),
+          const Text('Work Records', style: TextStyle(fontWeight: FontWeight.bold)),
+          if (partyLogs.isEmpty) const Text('No work records.')
+          else ...partyLogs.map((log) => ListTile(
+            dense: true, contentPadding: EdgeInsets.zero,
+            title: Text('${log.vehicleType} • ${log.vehicleName}'),
+            subtitle: Text('${log.date} • ${log.hours} hrs'),
+            trailing: Text('₹${log.totalAmount.toStringAsFixed(0)}'),
+          )),
+          const Divider(),
+          const Text('Payment History', style: TextStyle(fontWeight: FontWeight.bold)),
+          if (payments.isEmpty) const Text('No payments received.')
+          else ...payments.map((entry) => ListTile(
+            dense: true, contentPadding: EdgeInsets.zero,
+            title: Text(entry.title), subtitle: Text(entry.date),
+            trailing: Text('+₹${entry.amount.toStringAsFixed(0)}', style: const TextStyle(color: Colors.green)),
+          )),
+        ])),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close')),
+          ElevatedButton(onPressed: () {
+            Navigator.pop(dialogContext);
+            _addTransactionDialog('Jama', partyId: party.id);
+          }, child: const Text('Payment Add')),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCashBookTab() {
+    final totalJama = cashBook.where((c) => c.type == 'Jama').fold(0.0, (sum, c) => sum + c.amount);
+    final totalKharcha = cashBook.where((c) => c.type == 'Kharcha').fold(0.0, (sum, c) => sum + c.amount);
+    final balance = totalJama - totalKharcha;
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      Card(child: ListTile(
+        title: const Text('Cash Balance', style: TextStyle(fontWeight: FontWeight.bold)),
+        trailing: Text('₹${balance.toStringAsFixed(0)}',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: balance >= 0 ? Colors.green : Colors.red)),
+      )),
+      Row(children: [
+        Expanded(child: _khataSummaryCard('Total Jama', totalJama, Colors.green)),
+        Expanded(child: _khataSummaryCard('Total Kharcha', totalKharcha, Colors.red)),
+      ]),
+      const SizedBox(height: 8),
+      ...cashBook.map((entry) => ListTile(
+        leading: Icon(entry.type == 'Jama' ? Icons.arrow_downward : Icons.arrow_upward,
+            color: entry.type == 'Jama' ? Colors.green : Colors.red),
+        title: Text(entry.title),
+        subtitle: Text(entry.partyName.isEmpty ? entry.date : '${entry.partyName} • ${entry.date}'),
+        trailing: Text('${entry.type == 'Jama' ? '+' : '-'} ₹${entry.amount.toStringAsFixed(0)}',
+          style: TextStyle(fontWeight: FontWeight.bold, color: entry.type == 'Jama' ? Colors.green : Colors.red)),
+      )),
+    ]);
+  }
+
+  void _addTransactionDialog(String type, {String? partyId}) {
+    final detailController = TextEditingController();
+    final amountController = TextEditingController();
+    String? selectedPartyId = partyId ?? (clients.isNotEmpty ? clients.first.id : null);
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text(type == 'Jama' ? 'Paisa Mila (Jama)' : 'Paisa Diya (Kharcha)'),
+          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (type == 'Jama') ...[
+              DropdownButtonFormField<String>(
+                value: selectedPartyId,
+                decoration: const InputDecoration(labelText: 'Select Party'),
+                items: clients.map((party) => DropdownMenuItem(value: party.id, child: Text(party.name))).toList(),
+                onChanged: (value) => setDialogState(() => selectedPartyId = value),
+              ),
+              const SizedBox(height: 8),
+            ],
+            TextField(controller: detailController,
+              decoration: InputDecoration(labelText: type == 'Jama' ? 'Details (optional)' : 'Kharcha Details (e.g. Diesel)')),
+            TextField(controller: amountController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'Amount (₹)')),
+          ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            ElevatedButton(onPressed: () {
+              final amount = double.tryParse(amountController.text.trim()) ?? 0;
+              if (amount <= 0 || (type == 'Jama' &&
+                  (selectedPartyId == null || !clients.any((p) => p.id == selectedPartyId)))) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Valid amount aur Party select karein.')));
+                return;
+              }
+              final selected = clients.where((p) => p.id == selectedPartyId).toList();
+              final partyName = selected.isEmpty ? '' : selected.first.name;
+              final detail = detailController.text.trim();
+              setState(() {
+                cashBook.insert(0, CashEntry(
+                  title: detail.isNotEmpty ? detail :
+                    (type == 'Jama' ? 'Payment received from $partyName' : 'Kharcha'),
+                  amount: amount, type: type,
+                  date: DateFormat('dd MMM yyyy').format(DateTime.now()),
+                  partyId: type == 'Jama' ? selectedPartyId ?? '' : '',
+                  partyName: type == 'Jama' ? partyName : '',
+                ));
+              });
+              _saveData();
+              Navigator.pop(dialogContext);
+              detailController.dispose();
+              amountController.dispose();
+            }, child: const Text('Save')),
+          ],
+        ),
+      ),
+    );
+  }
+
 }
 
 class WorkEntrySheet extends StatefulWidget {
@@ -958,9 +1690,16 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
   void _recalculate() {
     final hrs = double.tryParse(hoursCtrl.text) ?? 0.0;
     final r = double.tryParse(rateCtrl.text) ?? 0.0;
-    setState(() {
-      calculatedTotal = hrs * r;
-    });
+    if (mounted) setState(() { calculatedTotal = hrs * r; });
+  }
+
+  @override
+  void dispose() {
+    machineNameCtrl.dispose();
+    machineNoCtrl.dispose();
+    hoursCtrl.dispose();
+    rateCtrl.dispose();
+    super.dispose();
   }
 
   @override
@@ -1051,6 +1790,8 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
                     driverName: selectedWorker!.name,
                     clientName: selectedClient!.name,
                     clientPhone: selectedClient!.phone,
+                    clientId: selectedClient!.id,
+                    vehicleNumber: machineNoCtrl.text.trim(),
                     hours: double.tryParse(hoursCtrl.text) ?? 0,
                     rate: double.tryParse(rateCtrl.text) ?? 0,
                     totalAmount: calculatedTotal,
@@ -1089,9 +1830,9 @@ class DriverKhataScreen extends StatefulWidget {
 class _DriverKhataScreenState extends State<DriverKhataScreen> {
   DateTime? selectedDate;
 
-  List<DriverLedgerEntry> get _driverEntries => widget.entries.where(
-    (entry) => entry.driverId == widget.driver.id,
-  ).toList();
+  List<DriverLedgerEntry> get _driverEntries => widget.entries
+      .where((entry) => entry.driverId == widget.driver.id)
+      .toList();
 
   double _totalFor(String type) => _driverEntries
       .where((entry) => entry.type == type)
@@ -1156,6 +1897,10 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
       ),
     );
 
+    if (!mounted) {
+      amountController.dispose();
+      return;
+    }
     final amount = double.tryParse(amountController.text.trim());
     amountController.dispose();
     if (saved == true && amount != null && amount > 0) {
@@ -1262,6 +2007,11 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
       ),
     );
 
+    if (!mounted) {
+      amountController.dispose();
+      reasonController.dispose();
+      return;
+    }
     final amount = double.tryParse(amountController.text.trim());
     final reason = reasonController.text.trim();
     amountController.dispose();
@@ -1292,7 +2042,7 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
       firstDate: DateTime(2020),
       lastDate: DateTime.now(),
     );
-    if (picked != null) setState(() => selectedDate = picked);
+    if (picked != null && mounted) setState(() => selectedDate = picked);
   }
 
   @override
@@ -1321,7 +2071,8 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
     final salaryPaid = _totalFor('Salary Paid');
     final advances = _totalFor('Advance');
     final otherPayments = _totalFor('Other Payment');
-    final balance = salaryDue - salaryPaid - advances - otherPayments;
+    // Other payments are shown separately and do not reduce the salary balance.
+    final balance = salaryDue - salaryPaid - advances;
 
     return Scaffold(
       appBar: AppBar(
@@ -1372,6 +2123,13 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
             ],
           ),
           const SizedBox(height: 12),
+          if (otherPayments > 0)
+            Card(
+              child: ListTile(
+                title: const Text('Other Payments'),
+                trailing: Text(_money(otherPayments)),
+              ),
+            ),
           ElevatedButton.icon(
             onPressed: _addLedgerEntry,
             icon: const Icon(Icons.add),
@@ -1413,8 +2171,8 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
           else
             ...visibleEntries.map((entry) {
               final isDue = entry.type == 'Salary Due';
-              final sign = isDue ? '+' : '-';
               final color = isDue ? Colors.green : Colors.red;
+              final sign = isDue ? '+' : '-';
               return Card(
                 child: ListTile(
                   leading: CircleAvatar(
@@ -1434,12 +2192,6 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
                 ),
               );
             }),
-          const SizedBox(height: 12),
-          if (otherPayments > 0)
-            Text(
-              'Other payments recorded: ${_money(otherPayments)}',
-              style: TextStyle(color: Colors.grey.shade700),
-            ),
         ],
       ),
     );
