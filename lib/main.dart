@@ -774,8 +774,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         children: [
           const Material(
             color: Colors.white,
-            child: TabBar(
-              labelColor: const Color(0xFFE65100),
+            child: const TabBar(
+              labelColor: Color(0xFFE65100),
               tabs: const [Tab(text: 'Len-Den'), Tab(text: 'ग्राहक बकाया'), Tab(text: 'Cash Book')],
             ),
           ),
