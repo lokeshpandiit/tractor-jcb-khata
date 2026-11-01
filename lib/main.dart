@@ -361,7 +361,41 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  // Fixed Direct WhatsApp Launcher
+  void _showSendOptions(WorkLog log) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
+          children: [
+            const ListTile(
+              title: Text(
+                'Send Work Details',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.sms_outlined, color: Colors.blue),
+              title: const Text('SMS'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _sendSMS(log);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.chat, color: Colors.green),
+              title: const Text('WhatsApp'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _sendWhatsApp(log);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // WhatsApp launcher
   void _sendWhatsApp(WorkLog log) async {
     final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
     final msg = '*Tractor/JCB Work Slip*\n\n'
@@ -578,22 +612,17 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                           Text('${log.vehicleName} | Driver: ${log.driverName}'),
                           Text('Duration: ${log.hours} hrs @ ₹${log.rate}/hr', style: TextStyle(color: Colors.grey.shade700)),
                           const SizedBox(height: 8),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              OutlinedButton.icon(
-                                icon: const Icon(Icons.message, size: 16),
-                                label: const Text('SMS'),
-                                onPressed: () => _sendSMS(log),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFE65100),
+                                foregroundColor: Colors.white,
                               ),
-                              const SizedBox(width: 8),
-                              ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-                                icon: const Icon(Icons.send, size: 16),
-                                label: const Text('WhatsApp'),
-                                onPressed: () => _sendWhatsApp(log),
-                              ),
-                            ],
+                              icon: const Icon(Icons.send, size: 16),
+                              label: const Text('Send'),
+                              onPressed: () => _showSendOptions(log),
+                            ),
                           )
                         ],
                       ),
