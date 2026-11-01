@@ -50,7 +50,7 @@ jobs:
           # permissions: SMS and phone actions only open external apps.
           permission = '    <uses-permission android:name="android.permission.READ_CONTACTS" />'
           if "android.permission.READ_CONTACTS" not in text:
-              text = text.replace("<application", permission + "\\n\\n    <application", 1)
+              text = text.replace("<application", permission + "\n\n    <application", 1)
 
           queries = """    <queries>
                   <intent>
@@ -70,7 +70,7 @@ jobs:
               </queries>
           """
           if "<queries>" not in text:
-              text = text.replace("</manifest>", queries + "\\n</manifest>")
+              text = text.replace("</manifest>", queries + "\n</manifest>")
           manifest.write_text(text, encoding="utf-8")
 
           # Fail the workflow early if the permission was not written.
