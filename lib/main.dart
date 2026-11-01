@@ -283,7 +283,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final folderId = await _getOrCreateDriveFolder(api);
     final file = await _createBackupFile();
     final dateName = 'LxH_ONE_Backup_' + DateFormat('yyyy-MM-dd').format(DateTime.now()) + '.json';
-    final existing = await api.files.list(q: "'" + folderId + "' in parents and name = '" + dateName + "' and trashed = false", spaces: 'drive', pageSize: 10, $fields: 'files(id,name)');
+    final existing = await api.files.list(q: "'" + folderId + "' in parents and name = '" + dateName + "' and trashed = false", spaces: 'drive', pageSize: 100, $fields: 'files(id,name)');
     final media = gdrive.Media(file.openRead(), await file.length(), contentType: 'application/json');
     if (existing.files != null && existing.files!.isNotEmpty) {
       final matchingFiles = existing.files!;
@@ -301,6 +301,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     await prefs.setString('last_drive_backup_account', account.email);
     final stillCurrent = uploadRevision == _dataRevision;
     await prefs.setBool('drive_backup_pending', !stillCurrent);
+    // Re-check after the asynchronous preference write to close the race
+    // where an edit starts just before the pending flag is cleared.
+    if (uploadRevision != _dataRevision) {
+      await prefs.setBool('drive_backup_pending', true);
+    }
     if (mounted && stillCurrent) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Backup Google Drive mein save ho gaya: ' + dateName)));
     }
@@ -476,6 +481,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Future<void> _saveData() async {
+    // Increment before the first await so an in-flight Drive upload can detect
+    // a change even while the local preferences are still being written.
+    _dataRevision++;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('vehicles_data', jsonEncode(vehicles.map((e) => e.toJson()).toList()));
     await prefs.setString('workers_data', jsonEncode(workers.map((e) => e.toJson()).toList()));
@@ -486,7 +494,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     // Mark data dirty; Drive upload will happen silently on next app open
     // if the user has already connected a Google account.
     await prefs.setBool('drive_backup_pending', true);
-    _dataRevision++;
     _scheduleDriveBackup();
   }
 
