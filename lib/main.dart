@@ -673,12 +673,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       padding: const EdgeInsets.all(16),
       children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Text('Machine Name', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          Wrap(spacing: 6, children: [
-            OutlinedButton.icon(onPressed: () => _openWorkEntryModal('All'), icon: const Icon(Icons.work), label: const Text('Work Entry')),
-            ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white), onPressed: _addMachineDialog, icon: const Icon(Icons.add), label: const Text('Add Machine')),
-          ]),
+          const Expanded(child: Text('Machine Name', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+          ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white), onPressed: _addMachineDialog, icon: const Icon(Icons.add), label: const Text('Add Machine')),
         ]),
+        const SizedBox(height: 10),
+        SizedBox(width: double.infinity, child: OutlinedButton.icon(
+          onPressed: () => _openWorkEntryModal('All'),
+          icon: const Icon(Icons.work),
+          label: const Text('New Work Entry'),
+          style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 13), foregroundColor: const Color(0xFFE65100), side: const BorderSide(color: Color(0xFFE65100))),
+        )),
         const SizedBox(height: 12),
         ...vehicles.map((v) => Card(child: ListTile(
           leading: CircleAvatar(
@@ -815,7 +819,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           OutlinedButton(onPressed:()async{await _addPersonEntry('clientPayment',p);refresh((){});},child:const Text('Add Payment Received')),
           OutlinedButton(onPressed:()async{p.active=!p.active;await _saveData();setState((){});refresh((){});},child:Text(p.active?'Mark Completed':'Mark Active')),
         ],
-        ElevatedButton.icon(onPressed:()=>_sendLedgerWhatsApp(p,driver),icon:const Icon(Icons.message),label:const Text('WhatsApp Hisab')),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          ElevatedButton.icon(onPressed:()=>_sendLedgerWhatsApp(p,driver),icon:const Icon(Icons.chat),label:const Text('WhatsApp Hisab')),
+          OutlinedButton.icon(onPressed:()=>_sendLedgerSMS(p,driver),icon:const Icon(Icons.sms),label:const Text('SMS Hisab')),
+        ]),
       ]))),
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))],
     )));
@@ -834,6 +841,20 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       setState(()=>ledgerEntries.insert(0,LedgerEntry(id:DateTime.now().microsecondsSinceEpoch.toString(),kind:kind,personName:p.name,title:note.text.trim().isEmpty?names[kind]!:note.text.trim(),amount:value,date:DateFormat('dd MMM yyyy').format(DateTime.now()))));
       _saveData();Navigator.pop(ctx);
     },child:const Text('Save'))]));
+  }
+
+  void _sendLedgerSMS(Person p, bool driver) async {
+    final total = driver ? _earned(p) : _bill(p);
+    final paid = driver ? _advance(p) + _driverPaid(p) : _received(p);
+    final due = total - paid;
+    final message = driver
+        ? 'Namaste ${p.name}, Total earning: ₹${total.toStringAsFixed(0)}, Advance: ₹${_advance(p).toStringAsFixed(0)}, Payment given: ₹${_driverPaid(p).toStringAsFixed(0)}, Remaining payable: ₹${due.toStringAsFixed(0)}. - LxH ONE'
+        : 'Namaste ${p.name}, Total bill: ₹${total.toStringAsFixed(0)}, Payment received: ₹${paid.toStringAsFixed(0)}, Remaining due: ₹${due.toStringAsFixed(0)}. - LxH ONE';
+    final phone = p.phone.replaceAll(RegExp(r'\\D'), '');
+    if (phone.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Phone number available nahi hai.'))); return; }
+    final uri = Uri(scheme: 'sms', path: phone, queryParameters: {'body': message});
+    try { await launchUrl(uri, mode: LaunchMode.externalApplication); }
+    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('SMS app open nahi hua: $e'))); }
   }
 
   void _sendLedgerWhatsApp(Person p,bool driver) async {
