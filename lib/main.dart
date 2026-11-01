@@ -319,7 +319,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       }
     } else if (cloudBackup == null &&
         !hasScopedData &&
-        !(prefs.getBool('lxh_has_linked_google_account') ?? false)) {
+        !(prefs.getBool('lxh_has_linked_google_account') ?? false) &&
+        !_driveRestoreFailed) {
       // First-ever Google account on this installation: preserve legacy local
       // data by moving it into that account's isolated namespace.
       for (final key in backupPreferenceKeys) {
@@ -333,21 +334,22 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       }
     }
 
+    await prefs.setBool(prefix + 'drive_restore_pending', _driveRestoreFailed);
+    if (_driveRestoreFailed) {
+      // Keep the app behind the sign-in gate until the cloud restore succeeds.
+      // Never let an empty/partial local database overwrite an existing backup.
+      await prefs.remove('active_google_email');
+      _activeGoogleAccount = null;
+      return;
+    }
+
     await prefs.setString('active_google_email', account.email);
     await prefs.setBool('lxh_has_linked_google_account', true);
-    await prefs.setBool(prefix + 'drive_restore_pending', _driveRestoreFailed);
-    if (!_driveRestoreFailed) {
-      await prefs.setBool(prefix + 'account_initialized', true);
-    }
+    await prefs.setBool(prefix + 'account_initialized', true);
     _activeGoogleAccount = account;
     _offlineMode = false;
     await _loadData();
-
-    // Do not upload local data after a failed restore. That could overwrite a
-    // valid remote backup with an incomplete local copy.
-    if (!_driveRestoreFailed) {
-      await _saveData();
-    }
+    await _saveData();
   }
 
   Future<void> _changeGoogleAccount() async {
@@ -398,14 +400,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   child: ElevatedButton.icon(
                     onPressed: _authBusy ? null : _signInGoogle,
                     icon: const Icon(Icons.login),
-                    label: Text(_authBusy ? 'Please wait...' : 'Continue with Google'),
+                    label: Text(_authBusy ? 'Please wait...' : (_driveRestoreFailed ? 'Retry Google Drive Restore' : 'Continue with Google')),
                   ),
                 ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: _authBusy ? null : _useOfflineMode,
-                  child: const Text('Continue Without Google for Now'),
-                ),
+                if (!_driveRestoreFailed) ...[
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: _authBusy ? null : _useOfflineMode,
+                    child: const Text('Continue Without Google for Now'),
+                  ),
+                ],
               ],
             ),
           ),
