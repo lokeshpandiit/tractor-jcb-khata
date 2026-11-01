@@ -268,7 +268,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         text: 'LxH ONE ka complete data backup. Is file ko apni WhatsApp chat (Message Yourself) mein bhej kar safe rakhein.',
       );
       final prefs = await SharedPreferences.getInstance();
-      if (result.status != ShareResultStatus.unavailable) {
+      if (result.status == ShareResultStatus.success) {
         await prefs.setString('last_backup_prompt_date', DateFormat('yyyy-MM-dd').format(DateTime.now()));
       }
       if (mounted) {
