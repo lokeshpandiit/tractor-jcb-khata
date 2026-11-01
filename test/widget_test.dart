@@ -21,6 +21,8 @@ void main() {
     expect(find.text('Worker'), findsOneWidget);
     expect(find.text('Parties'), findsOneWidget);
     expect(find.text('Khata'), findsOneWidget);
+    await tester.tap(find.text('Worker').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Driver Khata').first);
     await tester.pumpAndSettle();
     expect(find.text('Ramesh Driver Khata'), findsOneWidget);
