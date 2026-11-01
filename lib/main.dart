@@ -154,6 +154,14 @@ class CashEntry {
   );
 }
 
+String _normalizePhone(String value) {
+  var digits = value.replaceAll(RegExp(r'[^0-9]'), '');
+  if (digits.startsWith('00')) digits = digits.substring(2);
+  if (digits.startsWith('91') && digits.length == 12) digits = digits.substring(2);
+  if (digits.startsWith('0') && digits.length == 11) digits = digits.substring(1);
+  return digits;
+}
+
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
@@ -220,9 +228,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       final loadedLogs = decoded.map((e) => WorkLog.fromJson(e)).toList();
       logs = loadedLogs.map((log) {
         if (log.clientId.isNotEmpty) return log;
-        final phone = log.clientPhone.replaceAll(RegExp(r'[^0-9]'), '');
+        final phone = _normalizePhone(log.clientPhone);
         final phoneMatches = clients.where((p) =>
-          phone.isNotEmpty && p.phone.replaceAll(RegExp(r'[^0-9]'), '') == phone
+          phone.isNotEmpty && _normalizePhone(p.phone) == phone
         ).toList();
         Person? match;
         if (phoneMatches.length == 1) {
@@ -430,13 +438,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   // Fixed Direct WhatsApp Launcher
   void _sendWhatsApp(WorkLog log) async {
-    var cleanPhone = log.clientPhone.replaceAll(RegExp(r'[^0-9]'), '');
-    if (cleanPhone.startsWith('0') && cleanPhone.length == 11) {
-      cleanPhone = cleanPhone.substring(1);
-    }
-    if (cleanPhone.length == 10) {
-      cleanPhone = '91$cleanPhone';
-    }
+    var cleanPhone = _normalizePhone(log.clientPhone);
+    if (cleanPhone.length == 10) cleanPhone = '91$cleanPhone';
     final msg = '*Tractor/JCB Work Slip*\n\n'
         'Party: *${log.clientName}*\n'
         'Date: ${log.date}\n'
@@ -819,9 +822,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   color: entry.type == 'Jama' ? Colors.green : Colors.red),
             ),
             title: Text(entry.title),
-            subtitle: Text(entry.partyName.isNotEmpty ? '\${${entry.partyName}} • \${${entry.date}}' : entry.date),
+            subtitle: Text(entry.partyName.isNotEmpty ? '${entry.partyName} • ${entry.date}' : entry.date),
             trailing: Text(
-              '\${${entry.type == 'Jama' ? '+' : '-'}} ₹\${${entry.amount.toStringAsFixed(0)}}',
+              '${entry.type == 'Jama' ? '+' : '-'} ₹${entry.amount.toStringAsFixed(0)}',
               style: TextStyle(fontWeight: FontWeight.bold,
                   color: entry.type == 'Jama' ? Colors.green : Colors.red),
             ),
@@ -836,7 +839,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       child: Column(children: [
         Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
-        Text('₹\${${amount.toStringAsFixed(0)}}',
+        Text('₹${amount.toStringAsFixed(0)}',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
       ]),
     ));
@@ -857,7 +860,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       children: [
         Card(color: Colors.orange.shade50, child: ListTile(
           title: const Text('Total Customer Bकाया', style: TextStyle(fontWeight: FontWeight.bold)),
-          trailing: Text('₹\${${totalOutstanding.toStringAsFixed(0)}}',
+          trailing: Text('₹${totalOutstanding.toStringAsFixed(0)}',
             style: const TextStyle(fontSize: 20, color: Colors.deepOrange, fontWeight: FontWeight.bold)),
         )),
         const SizedBox(height: 8),
@@ -870,8 +873,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             final due = bill - paid;
             return Card(child: ListTile(
               title: Text(party.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text('Bill ₹\${${bill.toStringAsFixed(0)}}  •  Jama ₹\${${paid.toStringAsFixed(0)}}'),
-              trailing: Text('₹\${${(due > 0 ? due : 0).toStringAsFixed(0)}}',
+              subtitle: Text('Bill ₹${bill.toStringAsFixed(0)}  •  Jama ₹${paid.toStringAsFixed(0)}'),
+              trailing: Text('₹${(due > 0 ? due : 0).toStringAsFixed(0)}',
                 style: TextStyle(fontWeight: FontWeight.bold, color: due > 0 ? Colors.red : Colors.green)),
               onTap: () => _showPartyLedger(party),
             ));
@@ -880,7 +883,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           const SizedBox(height: 12),
           Card(color: Colors.amber.shade50, child: Padding(
             padding: const EdgeInsets.all(12),
-            child: Text('\${${unlinkedLogs.length}} purane Work Records kisi current Party se uniquely match nahi hue. Unka data surakshit hai, lekin Party-wise bकाया mein shamil nahi kiya gaya.'),
+            child: Text('${unlinkedLogs.length} purane Work Records kisi current Party se uniquely match nahi hue. Unka data surakshit hai, lekin Party-wise bकाया mein shamil nahi kiya gaya.'),
           )),
         ],
       ],
@@ -898,18 +901,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       builder: (dialogContext) => AlertDialog(
         title: Text(party.name),
         content: SizedBox(width: double.maxFinite, height: 380, child: ListView(children: [
-          Text('Total Work Bill: ₹\${${bill.toStringAsFixed(0)}}'),
-          Text('Total Jama: ₹\${${paid.toStringAsFixed(0)}}'),
-          Text('Bकाया: ₹\${${(due > 0 ? due : 0).toStringAsFixed(0)}}',
+          Text('Total Work Bill: ₹${bill.toStringAsFixed(0)}'),
+          Text('Total Jama: ₹${paid.toStringAsFixed(0)}'),
+          Text('Bकाया: ₹${(due > 0 ? due : 0).toStringAsFixed(0)}',
               style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
           const Divider(),
           const Text('Work Records', style: TextStyle(fontWeight: FontWeight.bold)),
           if (partyLogs.isEmpty) const Text('No work records.')
           else ...partyLogs.map((log) => ListTile(
             dense: true, contentPadding: EdgeInsets.zero,
-            title: Text('\${${log.vehicleType}} • \${${log.vehicleName}}'),
-            subtitle: Text('\${${log.date}} • \${${log.hours}} hrs'),
-            trailing: Text('₹\${${log.totalAmount.toStringAsFixed(0)}}'),
+            title: Text('${log.vehicleType} • ${log.vehicleName}'),
+            subtitle: Text('${log.date} • ${log.hours} hrs'),
+            trailing: Text('₹${log.totalAmount.toStringAsFixed(0)}'),
           )),
           const Divider(),
           const Text('Payment History', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -917,7 +920,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           else ...payments.map((entry) => ListTile(
             dense: true, contentPadding: EdgeInsets.zero,
             title: Text(entry.title), subtitle: Text(entry.date),
-            trailing: Text('+₹\${${entry.amount.toStringAsFixed(0)}}', style: const TextStyle(color: Colors.green)),
+            trailing: Text('+₹${entry.amount.toStringAsFixed(0)}', style: const TextStyle(color: Colors.green)),
           )),
         ])),
         actions: [
@@ -938,7 +941,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     return ListView(padding: const EdgeInsets.all(16), children: [
       Card(child: ListTile(
         title: const Text('Cash Balance', style: TextStyle(fontWeight: FontWeight.bold)),
-        trailing: Text('₹\${${balance.toStringAsFixed(0)}}',
+        trailing: Text('₹${balance.toStringAsFixed(0)}',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: balance >= 0 ? Colors.green : Colors.red)),
       )),
       Row(children: [
@@ -950,8 +953,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         leading: Icon(entry.type == 'Jama' ? Icons.arrow_downward : Icons.arrow_upward,
             color: entry.type == 'Jama' ? Colors.green : Colors.red),
         title: Text(entry.title),
-        subtitle: Text(entry.partyName.isEmpty ? entry.date : '\${${entry.partyName}} • \${${entry.date}}'),
-        trailing: Text('\${${entry.type == 'Jama' ? '+' : '-'}} ₹\${${entry.amount.toStringAsFixed(0)}}',
+        subtitle: Text(entry.partyName.isEmpty ? entry.date : '${entry.partyName} • ${entry.date}'),
+        trailing: Text('${entry.type == 'Jama' ? '+' : '-'} ₹${entry.amount.toStringAsFixed(0)}',
           style: TextStyle(fontWeight: FontWeight.bold, color: entry.type == 'Jama' ? Colors.green : Colors.red)),
       )),
     ]);
