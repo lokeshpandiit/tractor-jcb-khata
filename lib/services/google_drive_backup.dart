@@ -312,7 +312,6 @@ Future<void> initializeLxhDailyBackup() async {
     'lxh-daily-drive-backup',
     _backupTaskName,
     frequency: const Duration(hours: 24),
-    existingWorkPolicy: ExistingWorkPolicy.keep,
     constraints: Constraints(networkType: NetworkType.connected),
   );
 }
