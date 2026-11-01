@@ -832,11 +832,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   String _defaultCustomerPaymentSmsTemplate() =>
       'Namaste {partyName}, total work bill ₹{billTotal} tha. Pehle jama ₹{previousPaid}, abhi prapt ₹{paidNow}, kul jama ₹{totalPaid}. Baki ₹{balanceDue}{creditNote}. - LxH ONE';
   String _defaultCustomerPaymentWhatsAppTemplate() =>
-      '*LxH ONE Payment Receipt*§n§nParty: *{partyName}*§nTotal Work Bill: ₹{billTotal}§nPrevious Jama: ₹{previousPaid}§nToday Received: *₹{paidNow}*§nTotal Jama: ₹{totalPaid}§n*Remaining Balance: ₹{balanceDue}*{creditNote}§nDate: {date}§n{paymentDetails}';
+      '*LxH ONE Payment Receipt*\n\nParty: *{partyName}*\nTotal Work Bill: ₹{billTotal}\nPrevious Jama: ₹{previousPaid}\nToday Received: *₹{paidNow}*\nTotal Jama: ₹{totalPaid}\n*Remaining Balance: ₹{balanceDue}*{creditNote}\nDate: {date}\n{paymentDetails}';
   String _defaultDriverStatementSmsTemplate() =>
       'Namaste {driverName}, {date} tak total salary due ₹{totalSalaryDue}, salary paid ₹{salaryPaid}, advance ₹{advanceTaken}, other payment ₹{otherPayments}. Total received ₹{totalPaid}. Balance: {signedBalance}. {balanceStatus}. Latest: {latestEntryType} ₹{latestEntryAmount} ({latestEntryReason}). - LxH ONE';
   String _defaultDriverStatementWhatsAppTemplate() =>
-      '*LxH ONE — Driver Khata Statement*§n§nDriver: *{driverName}*§nSalary Setting: ₹{salaryRate}/{salaryType}§nTotal Salary Due: ₹{totalSalaryDue}§nSalary Paid: ₹{salaryPaid}§nAdvance Taken: ₹{advanceTaken}§nOther Payments: ₹{otherPayments}§nTotal Received: *₹{totalPaid}*§n*Balance: {signedBalance}*§n{balanceStatus}§n§nLatest Entry: {latestEntryType} — ₹{latestEntryAmount}§nReason: {latestEntryReason}§nDate: {date}';
+      '*LxH ONE — Driver Khata Statement*\n\nDriver: *{driverName}*\nSalary Setting: ₹{salaryRate}/{salaryType}\nTotal Salary Due: ₹{totalSalaryDue}\nSalary Paid: ₹{salaryPaid}\nAdvance Taken: ₹{advanceTaken}\nOther Payments: ₹{otherPayments}\nTotal Received: *₹{totalPaid}*\n*Balance: {signedBalance}*\n{balanceStatus}\n\nLatest Entry: {latestEntryType} — ₹{latestEntryAmount}\nReason: {latestEntryReason}\nDate: {date}';
 
   String _applyMessageValues(String template, Map<String, String> values) {
     var result = template;
@@ -892,10 +892,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       '{totalPaid}': totalPaid.toStringAsFixed(0),
       '{balanceDue}': balanceDue.toStringAsFixed(0),
       '{creditBalance}': credit.toStringAsFixed(0),
-      '{creditNote}': credit > 0 ? ' (Aapka extra jama/credit ₹§{credit.toStringAsFixed(0)} hai.)' : '',
+      '{creditNote}': credit > 0 ? ' (Aapka extra jama/credit ₹${credit.toStringAsFixed(0)} hai.)' : '',
       '{balanceStatus}': balanceDue > 0
-          ? '₹§{balanceDue.toStringAsFixed(0)} abhi baki hain.'
-          : credit > 0 ? 'Aapka ₹§{credit.toStringAsFixed(0)} advance/credit hamare paas hai.' : 'Aapka hisab poora clear hai.',
+          ? '₹${balanceDue.toStringAsFixed(0)} abhi baki hain.'
+          : credit > 0 ? 'Aapka ₹${credit.toStringAsFixed(0)} advance/credit hamare paas hai.' : 'Aapka hisab poora clear hai.',
       '{paymentDetails}': payment.title,
     };
     final key = channel == 'sms' ? 'customer_payment_sms_template' : 'customer_payment_whatsapp_template';
@@ -943,11 +943,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final other = total('Other Payment');
     final paidTotal = salaryPaid + advances + other;
     final balance = salaryDue - paidTotal;
-    final signedBalance = balance < 0 ? '-₹§{balance.abs().toStringAsFixed(0)}' : '₹§{balance.toStringAsFixed(0)}';
+    final signedBalance = balance < 0 ? '-₹${balance.abs().toStringAsFixed(0)}' : '₹${balance.toStringAsFixed(0)}';
     final status = balance > 0
-        ? 'Aapki salary me se ₹§{balance.toStringAsFixed(0)} dena baki hai.'
+        ? 'Aapki salary me se ₹${balance.toStringAsFixed(0)} dena baki hai.'
         : balance < 0
-            ? 'Aapne total salary se ₹§{balance.abs().toStringAsFixed(0)} zyada le liye hain. Agli salary me adjust hoga.'
+            ? 'Aapne total salary se ₹${balance.abs().toStringAsFixed(0)} zyada le liye hain. Agli salary me adjust hoga.'
             : 'Aapka salary hisab barabar hai.';
     final values = <String, String>{
       '{driverName}': driver.name,
@@ -979,7 +979,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   Future<void> _recordDriverPaymentInCashBook(Person driver, DriverLedgerEntry entry) async {
     if (entry.type != 'Salary Due') {
       cashBook.insert(0, CashEntry(
-        title: 'Driver payment: §{driver.name} • §{entry.type} • §{entry.reason}',
+        title: 'Driver payment: ${driver.name} • ${entry.type} • ${entry.reason}',
         amount: entry.amount,
         type: 'Kharcha',
         date: entry.date,
