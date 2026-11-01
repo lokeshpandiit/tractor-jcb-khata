@@ -233,29 +233,82 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   Future<void> _maybeShowDailyBackupPrompt() async {
     final prefs = await SharedPreferences.getInstance();
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    if (prefs.getString('last_backup_prompt_date') == today || !mounted) return;
+    if (prefs.getString('last_drive_backup_date') == today || !mounted) return;
+    final account = await _googleSignIn.signInSilently();
+    if (account != null) {
+      try { await _uploadDailyDriveBackup(account); return; }
+      catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Google Drive backup failed: $e'))); }
+    }
+    if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: true,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Daily Data Backup'),
-          content: const Text('Aaj apne LxH ONE ka data backup bana kar WhatsApp par apni khud ki chat mein bhej dein. Isse phone badalne par data safe rahega.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Later')),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.share),
-              label: const Text('Send to Self'),
-              onPressed: () {
-                Navigator.pop(dialogContext);
-                _createAndShareBackup();
-              },
-            ),
-          ],
-        ),
-      );
+      showDialog<void>(context: context, builder: (ctx) => AlertDialog(
+        title: const Text('Google Drive Backup'),
+        content: const Text('Aaj ka LxH ONE backup Google Drive mein save karein. Google account connect karein; restore bhi isi account ke Drive folder se hoga.'),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Later')),
+          ElevatedButton.icon(onPressed: () { Navigator.pop(ctx); _backupToGoogleDrive(); }, icon: const Icon(Icons.cloud_upload), label: const Text('Connect & Backup'))],
+      ));
     });
+  }
+
+  Future<gdrive.DriveApi> _driveApiFor(GoogleSignInAccount account) async {
+    final auth = await account.authentication;
+    final token = auth.accessToken;
+    if (token == null || token.isEmpty) throw Exception('Google Drive access token nahi mila. Dobara sign in karein.');
+    return gdrive.DriveApi(_GoogleAuthClient(token));
+  }
+
+  Future<String> _getOrCreateDriveFolder(gdrive.DriveApi api) async {
+    final result = await api.files.list(q: "name = 'LxH ONE Backups' and mimeType = 'application/vnd.google-apps.folder' and trashed = false", spaces: 'drive', pageSize: 100, $fields: 'files(id,name)');
+    if (result.files != null && result.files!.isNotEmpty) return result.files!.first.id!;
+    final folder = await api.files.create(gdrive.File(name: 'LxH ONE Backups', mimeType: 'application/vnd.google-apps.folder'));
+    if (folder.id == null) throw Exception('Google Drive backup folder create nahi hua.');
+    return folder.id!;
+  }
+
+  Future<void> _uploadDailyDriveBackup(GoogleSignInAccount account) async {
+    final api = await _driveApiFor(account);
+    final folderId = await _getOrCreateDriveFolder(api);
+    final file = await _createBackupFile();
+    final dateName = 'LxH_ONE_Backup_' + DateFormat('yyyy-MM-dd').format(DateTime.now()) + '.json';
+    final existing = await api.files.list(q: "'" + folderId + "' in parents and name = '" + dateName + "' and trashed = false", spaces: 'drive', pageSize: 10, $fields: 'files(id,name)');
+    final media = gdrive.Media(file.openRead(), await file.length(), contentType: 'application/json');
+    if (existing.files != null && existing.files!.isNotEmpty) {
+      await api.files.update(gdrive.File(name: dateName), existing.files!.first.id!, uploadMedia: media);
+    } else {
+      await api.files.create(gdrive.File(name: dateName, parents: [folderId]), uploadMedia: media);
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('last_drive_backup_date', DateFormat('yyyy-MM-dd').format(DateTime.now()));
+    await prefs.setString('last_drive_backup_account', account.email);
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Backup Google Drive mein save ho gaya: ' + dateName)));
+  }
+
+  Future<void> _backupToGoogleDrive() async {
+    try { final account = await _googleSignIn.signIn(); if (account == null) return; await _uploadDailyDriveBackup(account); }
+    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Google Drive backup failed: $e'))); }
+  }
+
+  Future<void> _restoreFromGoogleDrive() async {
+    try {
+      final account = await _googleSignIn.signIn() ?? await _googleSignIn.signInSilently();
+      if (account == null) return;
+      final api = await _driveApiFor(account);
+      final folderId = await _getOrCreateDriveFolder(api);
+      final result = await api.files.list(q: "'" + folderId + "' in parents and trashed = false", spaces: 'drive', orderBy: 'name desc', pageSize: 100, $fields: 'files(id,name,modifiedTime)');
+      final backups = (result.files ?? []).where((f) => (f.name ?? '').endsWith('.json')).toList();
+      if (backups.isEmpty) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Is Google account ke Drive folder mein backup nahi mila.'))); return; }
+      if (!mounted) return;
+      final selected = await showDialog<gdrive.File>(context: context, builder: (ctx) => AlertDialog(
+        title: const Text('Google Drive se Restore'),
+        content: SizedBox(width: 420, height: 360, child: ListView(children: backups.map((f) => ListTile(leading: const Icon(Icons.description), title: Text(f.name ?? 'Dated backup'), subtitle: Text(f.modifiedTime == null ? '' : DateFormat('dd MMM yyyy, hh:mm a').format(f.modifiedTime!.toLocal())), onTap: () => Navigator.pop(ctx, f))).toList())),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel'))],
+      ));
+      if (selected == null || selected.id == null) return;
+      final media = await api.files.get(selected.id!, downloadOptions: gdrive.DownloadOptions.fullMedia) as gdrive.Media;
+      final bytes = await media.stream.fold<List<int>>(<int>[], (all, chunk) => all..addAll(chunk));
+      await _restoreBackupBytes(bytes);
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Google Drive restore failed: $e'))); }
   }
 
   Future<File> _createBackupFile() async {
