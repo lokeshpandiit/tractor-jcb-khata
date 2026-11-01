@@ -231,24 +231,21 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Future<void> _maybeShowDailyBackupPrompt() async {
+    // No popup: upload silently only when local data changed and a Google
+    // account was connected earlier by the user.
     final prefs = await SharedPreferences.getInstance();
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    if (prefs.getString('last_drive_backup_date') == today || !mounted) return;
-    final account = await _googleSignIn.signInSilently();
-    if (account != null) {
-      try { await _uploadDailyDriveBackup(account); return; }
-      catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Google Drive backup failed: $e'))); }
+    if (!mounted ||
+        prefs.getBool('drive_backup_pending') != true ||
+        prefs.getString('last_drive_backup_date') == today) {
+      return;
     }
-    if (!mounted) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      showDialog<void>(context: context, builder: (ctx) => AlertDialog(
-        title: const Text('Google Drive Backup'),
-        content: const Text('Aaj ka LxH ONE backup Google Drive mein save karein. Google account connect karein; restore bhi isi account ke Drive folder se hoga.'),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Later')),
-          ElevatedButton.icon(onPressed: () { Navigator.pop(ctx); _backupToGoogleDrive(); }, icon: const Icon(Icons.cloud_upload), label: const Text('Connect & Backup'))],
-      ));
-    });
+    try {
+      final account = await _googleSignIn.signInSilently();
+      if (account != null) await _uploadDailyDriveBackup(account);
+    } catch (_) {
+      // Keep the pending flag. Retry next time the app is opened; never prompt.
+    }
   }
 
   Future<gdrive.DriveApi> _driveApiFor(GoogleSignInAccount account) async {
@@ -281,6 +278,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('last_drive_backup_date', DateFormat('yyyy-MM-dd').format(DateTime.now()));
     await prefs.setString('last_drive_backup_account', account.email);
+    await prefs.setBool('drive_backup_pending', false);
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Backup Google Drive mein save ho gaya: ' + dateName)));
   }
 
@@ -453,6 +451,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     await prefs.setString('logs_data', jsonEncode(logs.map((e) => e.toJson()).toList()));
     await prefs.setString('cash_data', jsonEncode(cashBook.map((e) => e.toJson()).toList()));
     await prefs.setString('ledger_entries_data', jsonEncode(ledgerEntries.map((e) => e.toJson()).toList()));
+    // Mark data dirty; Drive upload will happen silently on next app open
+    // if the user has already connected a Google account.
+    await prefs.setBool('drive_backup_pending', true);
   }
 
   void _openWorkEntryModal(String vehicleType) {
