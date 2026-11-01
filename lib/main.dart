@@ -222,6 +222,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   bool _authBusy = false;
   String? _authError;
   bool _driveRestoreFailed = false;
+  bool _offlineMode = false;
 
   String _accountKey(String key) {
     final email = _activeGoogleAccount?.email;
@@ -245,6 +246,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     } finally {
       if (mounted) setState(() => _authReady = true);
     }
+  }
+
+  Future<void> _useOfflineMode() async {
+    setState(() {
+      _offlineMode = true;
+      _authError = null;
+    });
+    await _loadData();
   }
 
   Future<void> _signInGoogle() async {
@@ -331,6 +340,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       await prefs.setBool(prefix + 'account_initialized', true);
     }
     _activeGoogleAccount = account;
+    _offlineMode = false;
     await _loadData();
 
     // Do not upload local data after a failed restore. That could overwrite a
@@ -348,6 +358,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     if (!mounted) return;
     setState(() {
       _activeGoogleAccount = null;
+      _offlineMode = false;
       vehicles = [];
       workers = [];
       clients = [];
@@ -389,6 +400,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     icon: const Icon(Icons.login),
                     label: Text(_authBusy ? 'Please wait...' : 'Continue with Google'),
                   ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _authBusy ? null : _useOfflineMode,
+                  child: const Text('Continue Without Google for Now'),
                 ),
               ],
             ),
@@ -503,7 +519,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Future<void> _saveData() async {
-    if (_activeGoogleAccount == null) return;
+    if (_activeGoogleAccount == null && !_offlineMode) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_accountKey('vehicles_data'), jsonEncode(vehicles.map((e) => e.toJson()).toList()));
     await prefs.setString(_accountKey('workers_data'), jsonEncode(workers.map((e) => e.toJson()).toList()));
@@ -512,7 +528,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     await prefs.setString(_accountKey('cash_data'), jsonEncode(cashBook.map((e) => e.toJson()).toList()));
     await prefs.setString(_accountKey('advance_requests_data'), jsonEncode(advanceRequests.map((e) => e.toJson()).toList()));
     await prefs.setBool(_accountKey('khata_migration_v2_done'), true);
-    await _backupToDrive();
+    if (_activeGoogleAccount != null) await _backupToDrive();
   }
 
   Future<void> _backupToDrive() async {
@@ -909,24 +925,30 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         backgroundColor: const Color(0xFFE65100),
         elevation: 2,
         actions: [
-          if (_activeGoogleAccount != null) ...[
+          if (_activeGoogleAccount != null || _offlineMode)
             IconButton(
               tooltip: 'Message Settings',
               onPressed: _openMessageSettings,
               icon: const Icon(Icons.settings, color: Colors.white),
             ),
+          if (_activeGoogleAccount != null)
             IconButton(
               tooltip: 'Change Google Account',
               onPressed: _changeGoogleAccount,
               icon: const Icon(Icons.account_circle, color: Colors.white),
             ),
-          ],
+          if (_offlineMode)
+            IconButton(
+              tooltip: 'Sign in with Google',
+              onPressed: _signInGoogle,
+              icon: const Icon(Icons.cloud_sync, color: Colors.white),
+            ),
         ],
       ),
       body: !_authReady
           ? const Center(child: CircularProgressIndicator())
-          : (_activeGoogleAccount == null ? _buildLoginScreen() : screens[_currentIndex]),
-      bottomNavigationBar: _activeGoogleAccount == null ? null : NavigationBar(
+          : (_activeGoogleAccount == null && !_offlineMode ? _buildLoginScreen() : screens[_currentIndex]),
+      bottomNavigationBar: (_activeGoogleAccount == null && !_offlineMode) ? null : NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (idx) => setState(() => _currentIndex = idx),
         destinations: const [
