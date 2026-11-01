@@ -265,6 +265,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     setState(() {
       _authBusy = true;
       _authError = null;
+      _offlineMode = false;
     });
     try {
       final account = await GoogleDriveBackupService.signIn();
