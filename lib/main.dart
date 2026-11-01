@@ -7,14 +7,12 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter/services.dart';
-import 'package:cryptography_flutter/cryptography_flutter.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'services/backup_encryption.dart';
 import 'services/google_drive_backup.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterCryptography.enable();
   await initializeLxhDailyBackup();
   runApp(const FleetKhataApp());
 }
