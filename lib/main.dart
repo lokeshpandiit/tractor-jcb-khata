@@ -633,7 +633,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   String? _normalizedIndianPhone(String rawPhone) {
-    var digits = rawPhone.replaceAll(RegExp(r'\\D'), '');
+    var digits = rawPhone.replaceAll(RegExp(r'\D'), '');
     if (digits.startsWith('0') && digits.length == 11) {
       digits = digits.substring(1);
     }
@@ -643,14 +643,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   String _workSlipMessage(WorkLog log) {
-    return 'TRACTOR / JCB WORK SLIP\\n'
-        'Party: ${log.clientName}\\n'
-        'Date: ${log.date}\\n'
-        'Machine: ${log.vehicleName} (${log.vehicleType})\\n'
-        'Driver: ${log.driverName}\\n'
-        'Working Hours: ${log.hours}\\n'
-        'Rate: ₹${log.rate.toStringAsFixed(0)} per hour\\n'
-        'Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}\\n'
+    return 'TRACTOR / JCB WORK SLIP\n'
+        'Party: ${log.clientName}\n'
+        'Date: ${log.date}\n'
+        'Machine: ${log.vehicleName} (${log.vehicleType})\n'
+        'Driver: ${log.driverName}\n'
+        'Working Hours: ${log.hours}\n'
+        'Rate: ₹${log.rate.toStringAsFixed(0)} per hour\n'
+        'Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}\n'
         '- LxH ONE';
   }
 
