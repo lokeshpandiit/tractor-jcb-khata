@@ -731,46 +731,91 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Widget _buildPeopleTab(String role) {
-    final list = role == 'Worker' ? workers : clients;
-
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(role == 'Worker' ? 'Drivers / Workers' : 'Clients / Parties', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            ElevatedButton.icon(
-              onPressed: () => _addMultiplePersonsDialog(role),
-              icon: const Icon(Icons.person_add),
-              label: const Text('Add New'),
-            )
-          ],
-        ),
-        const SizedBox(height: 12),
-        ...list.map((p) => Card(
-          child: ListTile(
-            leading: CircleAvatar(child: Text(p.name.isNotEmpty ? p.name[0] : 'P')),
-            title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text(p.phone),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.phone, color: Colors.green),
-                  onPressed: () => launchUrl(Uri.parse('tel:${p.phone}'), mode: LaunchMode.externalApplication),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                  onPressed: () => _deletePerson(p, role),
-                ),
-              ],
-            ),
-          ),
-        )),
+    final driver = role == 'Worker';
+    final list = driver ? workers : [...clients.where((p)=>p.active), ...clients.where((p)=>!p.active)];
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text(driver ? 'Drivers' : 'Clients / Parties', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        ElevatedButton.icon(onPressed: ()=>_addMultiplePersonsDialog(role), icon: const Icon(Icons.person_add), label: const Text('Add New')),
+      ]),
+      if (!driver) const Padding(padding: EdgeInsets.only(top:12,bottom:4), child: Text('ACTIVE • KAAM CHAL RAHA HAI',style:TextStyle(color:Colors.green,fontWeight:FontWeight.bold))),
+      ...list.where((p)=>driver || p.active).map((p)=>_personTile(p,driver)),
+      if (!driver && clients.any((p)=>!p.active)) ...[
+        const Padding(padding:EdgeInsets.only(top:14,bottom:4),child:Text('COMPLETED • KAAM POORA',style:TextStyle(fontWeight:FontWeight.bold,color:Colors.grey))),
+        ...list.where((p)=>!p.active).map((p)=>_personTile(p,false)),
       ],
-    );
+      if (list.isEmpty) const Padding(padding:EdgeInsets.all(24),child:Center(child:Text('Abhi koi record nahi hai.'))),
+    ]);
   }
+
+  Widget _personTile(Person p,bool driver) {
+    final due = driver ? _driverDue(p) : _clientDue(p);
+    return Card(child:ListTile(
+      leading:CircleAvatar(child:Text(p.name.isEmpty?'?':p.name[0].toUpperCase())),
+      title:Text(p.name,style:const TextStyle(fontWeight:FontWeight.bold)),
+      subtitle:Text(driver ? p.phone : '\${p.active ? "Active" : "Completed"} • \${p.phone}'),
+      trailing:Row(mainAxisSize:MainAxisSize.min,children:[Text('₹\${due.abs().toStringAsFixed(0)}',style:TextStyle(fontWeight:FontWeight.bold,color:due>0?Colors.orange:Colors.green)),const Icon(Icons.chevron_right)]),
+      onTap:()=>_showPersonLedger(p,driver),
+    ));
+  }
+
+  double _bill(Person p)=>logs.where((l)=>l.clientName==p.name).fold(0.0,(v,l)=>v+l.totalAmount);
+  double _received(Person p)=>ledgerEntries.where((e)=>e.kind=='clientPayment'&&e.personName==p.name).fold(0.0,(v,e)=>v+e.amount);
+  double _earned(Person p)=>ledgerEntries.where((e)=>e.kind=='driverEarning'&&e.personName==p.name).fold(0.0,(v,e)=>v+e.amount);
+  double _advance(Person p)=>ledgerEntries.where((e)=>e.kind=='driverAdvance'&&e.personName==p.name).fold(0.0,(v,e)=>v+e.amount);
+  double _driverPaid(Person p)=>ledgerEntries.where((e)=>e.kind=='driverPayment'&&e.personName==p.name).fold(0.0,(v,e)=>v+e.amount);
+  double _clientDue(Person p)=>_bill(p)-_received(p);
+  double _driverDue(Person p)=>_earned(p)-_advance(p)-_driverPaid(p);
+
+  void _showPersonLedger(Person p,bool driver) {
+    showDialog(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,refresh)=>AlertDialog(
+      title:Text('\${p.name} ka Hisab'),
+      content:SizedBox(width:420,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,mainAxisSize:MainAxisSize.min,children:[
+        if(driver)...[
+          _ledgerLine('Total Earning (Manual)',_earned(p)),_ledgerLine('Advance Given',_advance(p)),_ledgerLine('Other Payment Given',_driverPaid(p)),_ledgerLine('Remaining Payable',_driverDue(p)),
+          const Divider(),const Text('Earning / Payment History',style:TextStyle(fontWeight:FontWeight.bold)),
+          ...ledgerEntries.where((e)=>e.personName==p.name&&e.kind.startsWith('driver')).map((e)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹\${e.amount.toStringAsFixed(0)}'))),
+          OutlinedButton(onPressed:()async{await _addPersonEntry('driverEarning',p);refresh((){});},child:const Text('Add Earning')),
+          OutlinedButton(onPressed:()async{await _addPersonEntry('driverAdvance',p);refresh((){});},child:const Text('Add Advance')),
+          OutlinedButton(onPressed:()async{await _addPersonEntry('driverPayment',p);refresh((){});},child:const Text('Add Payment Given')),
+        ]else...[
+          _ledgerLine('Total Bill',_bill(p)),_ledgerLine('Payment Received',_received(p)),_ledgerLine('Remaining Due',_clientDue(p)),
+          const Divider(),const Text('Work History',style:TextStyle(fontWeight:FontWeight.bold)),
+          ...logs.where((l)=>l.clientName==p.name).map((l)=>ListTile(contentPadding:EdgeInsets.zero,title:Text('\${l.date} • \${l.vehicleName}'),subtitle:Text('\${l.hours} hrs × ₹\${l.rate.toStringAsFixed(0)}'),trailing:Text('₹\${l.totalAmount.toStringAsFixed(0)}'))),
+          const Divider(),const Text('Payment History',style:TextStyle(fontWeight:FontWeight.bold)),
+          ...ledgerEntries.where((e)=>e.kind=='clientPayment'&&e.personName==p.name).map((e)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹\${e.amount.toStringAsFixed(0)}'))),
+          OutlinedButton(onPressed:()async{await _addPersonEntry('clientPayment',p);refresh((){});},child:const Text('Add Payment Received')),
+          OutlinedButton(onPressed:()async{p.active=!p.active;await _saveData();setState((){});refresh((){});},child:Text(p.active?'Mark Completed':'Mark Active')),
+        ],
+        ElevatedButton.icon(onPressed:()=>_sendLedgerWhatsApp(p,driver),icon:const Icon(Icons.message),label:const Text('WhatsApp Hisab')),
+      ]))),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))],
+    )));
+  }
+
+  Widget _ledgerLine(String label,double amount)=>Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[Flexible(child:Text(label)),Text('₹\${amount.toStringAsFixed(0)}',style:const TextStyle(fontWeight:FontWeight.bold))]));
+
+  Future<void> _addPersonEntry(String kind,Person p) async {
+    final amount=TextEditingController(),note=TextEditingController();
+    final names={'driverEarning':'Add Earning','driverAdvance':'Add Advance','driverPayment':'Add Payment Given','clientPayment':'Add Payment Received'};
+    await showDialog(context:context,builder:(ctx)=>AlertDialog(title:Text(names[kind]!),content:Column(mainAxisSize:MainAxisSize.min,children:[
+      TextField(controller:amount,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Amount (₹)')),
+      TextField(controller:note,decoration:const InputDecoration(labelText:'Note (optional)')),
+    ]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancel')),ElevatedButton(onPressed:(){
+      final value=double.tryParse(amount.text)??0;if(value<=0)return;
+      setState(()=>ledgerEntries.insert(0,LedgerEntry(id:DateTime.now().microsecondsSinceEpoch.toString(),kind:kind,personName:p.name,title:note.text.trim().isEmpty?names[kind]!:note.text.trim(),amount:value,date:DateFormat('dd MMM yyyy').format(DateTime.now()))));
+      _saveData();Navigator.pop(ctx);
+    },child:const Text('Save'))]));
+  }
+
+  void _sendLedgerWhatsApp(Person p,bool driver) async {
+    final total=driver?_earned(p):_bill(p),paid=driver?_advance(p)+_driverPaid(p):_received(p),due=total-paid;
+    final message=driver?'Namaste \${p.name},\\nTotal earning: ₹\${total.toStringAsFixed(0)}\\nAdvance: ₹\${_advance(p).toStringAsFixed(0)}\\nPayment given: ₹\${_driverPaid(p).toStringAsFixed(0)}\\nRemaining payable: ₹\${due.toStringAsFixed(0)}':'Namaste \${p.name},\\nTotal bill: ₹\${total.toStringAsFixed(0)}\\nPayment received: ₹\${paid.toStringAsFixed(0)}\\nRemaining due: ₹\${due.toStringAsFixed(0)}';
+    final phone=p.phone.replaceAll(RegExp(r'\\D'),'');
+    final uri=Uri.parse('https://wa.me/\${phone.startsWith('91')?phone:'91$phone'}?text=\${Uri.encodeComponent(message)}');
+    await launchUrl(uri,mode:LaunchMode.externalApplication);
+  }
+
 
   Widget _buildCashTab() {
     double totalJama = cashBook.where((c) => c.type == 'Jama').fold(0.0, (sum, c) => sum + c.amount);
