@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, final-khata-v2 ]
   workflow_dispatch:
 
 jobs:
@@ -25,22 +25,172 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Clean Android, Fix Kotlin 1.9.24 & Launcher
+      # Recreate the Android wrapper because this repository keeps only the
+      # project-specific Android files. Re-apply the app permissions after
+      # scaffold generation so they cannot silently disappear from the APK.
+      - name: Generate Android scaffold and restore LxH permissions
         run: |
           rm -rf android
           flutter create . --platforms android --project-name tractor_jcb_khata
-          
-          # Force Kotlin version to 1.9.24 in settings.gradle
+
+          # Keep Kotlin compatible with Flutter 3.24 / the Android plugin.
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/g' android/settings.gradle
 
-          # Fix App Label in AndroidManifest.xml
-          sed -i 's/android:label="[^"]*"/android:label="LxH ONE"/g' android/app/src/main/AndroidManifest.xml
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text(encoding="utf-8")
+
+          text = re.sub(r'android:label="[^"]*"', 'android:label="LxH ONE"', text, count=1)
+
+          # The app explicitly requests Contacts permission before using the
+          # Android contact selection flow. Do not add unrelated SMS/call/storage
+          # permissions: SMS and phone actions only open external apps.
+          permission = '    <uses-permission android:name="android.permission.READ_CONTACTS" />'
+          if "android.permission.READ_CONTACTS" not in text:
+              text = text.replace("<application", permission + "\n\n    <application", 1)
+
+          queries = """    <queries>
+                  <intent>
+                      <action android:name="android.intent.action.VIEW" />
+                      <data android:scheme="https" />
+                  </intent>
+                  <intent>
+                      <action android:name="android.intent.action.SENDTO" />
+                      <data android:scheme="sms" />
+                  </intent>
+                  <intent>
+                      <action android:name="android.intent.action.SENDTO" />
+                      <data android:scheme="smsto" />
+                  </intent>
+                  <package android:name="com.whatsapp" />
+                  <package android:name="com.whatsapp.w4b" />
+              </queries>
+          """
+          if "<queries>" not in text:
+              text = text.replace("</manifest>", queries + "\n</manifest>")
+          manifest.write_text(text, encoding="utf-8")
+
+          # Fail the workflow early if the permission was not written.
+          assert "android.permission.READ_CONTACTS" in manifest.read_text(encoding="utf-8")
+          PY
+
+      - name: Install default-SMS-only Android bridge
+        run: |
+          mkdir -p android/app/src/main/kotlin/com/example/tractor_jcb_khata
+          cat > android/app/src/main/kotlin/com/example/tractor_jcb_khata/MainActivity.kt <<'KOTLIN'
+          package com.example.tractor_jcb_khata
+
+          import android.content.ActivityNotFoundException
+          import android.content.Intent
+          import android.net.Uri
+          import android.provider.Telephony
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+
+          class MainActivity : FlutterActivity() {
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(
+                      flutterEngine.dartExecutor.binaryMessenger,
+                      "com.example.tractor_jcb_khata/sms"
+                  ).setMethodCallHandler { call, result ->
+                      if (call.method != "openSms") {
+                          result.notImplemented()
+                          return@setMethodCallHandler
+                      }
+
+                      val phone = call.argument<String>("phone").orEmpty()
+                      val message = call.argument<String>("message").orEmpty()
+                      if (phone.isBlank()) {
+                          result.error("INVALID_PHONE", "A phone number is required.", null)
+                          return@setMethodCallHandler
+                      }
+
+                      val intent = Intent(
+                          Intent.ACTION_SENDTO,
+                          Uri.fromParts("smsto", phone, null)
+                      ).apply {
+                          putExtra("sms_body", message)
+                          val defaultSmsPackage = Telephony.Sms.getDefaultSmsPackage(this@MainActivity)
+                          if (!defaultSmsPackage.isNullOrBlank()) {
+                              setPackage(defaultSmsPackage)
+                          }
+                      }
+
+                      try {
+                          startActivity(intent)
+                          result.success(true)
+                      } catch (error: ActivityNotFoundException) {
+                          result.error("NO_SMS_APP", "No default SMS app is available.", error.message)
+                      } catch (error: Exception) {
+                          result.error("SMS_LAUNCH_FAILED", "Could not open the SMS app.", error.message)
+                      }
+                  }
+              }
+          }
+          KOTLIN
+
+      - name: Configure stable signing for Google OAuth
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/lxh-upload-key.jks
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gradle = Path("android/app/build.gradle")
+          text = gradle.read_text(encoding="utf-8")
+          old = """    buildTypes {
+                  release {
+                      signingConfig signingConfigs.debug
+                  }
+              }"""
+          new = """    if (file("lxh-upload-key.jks").exists()) {
+                  signingConfigs {
+                      lxhRelease {
+                          storeFile file("lxh-upload-key.jks")
+                          storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+                          keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: ""
+                          keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: ""
+                      }
+                  }
+              }
+
+              buildTypes {
+                  release {
+                      if (file("lxh-upload-key.jks").exists()) {
+                          signingConfig signingConfigs.lxhRelease
+                      } else {
+                          signingConfig signingConfigs.debug
+                      }
+                  }
+              }"""
+          if old not in text:
+              raise SystemExit("Could not find the generated release signing block.")
+          gradle.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
 
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Build Lightweight APK
-        run: flutter build apk --release --split-per-abi
+      - name: Analyze Dart Code
+        run: flutter analyze --no-pub
+
+      - name: Run Flutter Tests
+        run: flutter test --no-pub
+
+      - name: Build Release APKs
+        run: flutter build apk --release --split-per-abi --dart-define=GOOGLE_SERVER_CLIENT_ID=${{ secrets.GOOGLE_SERVER_CLIENT_ID }}
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
