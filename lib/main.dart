@@ -7,10 +7,14 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter/services.dart';
+import 'package:cryptography_flutter/cryptography_flutter.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'services/backup_encryption.dart';
 import 'services/google_drive_backup.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  FlutterCryptography.enable();
   await initializeLxhDailyBackup();
   runApp(const FleetKhataApp());
 }
@@ -307,6 +311,8 @@ class MainNavigationScreen extends StatefulWidget {
 }
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
+  static const FlutterSecureStorage _backupPasswordStorage = FlutterSecureStorage();
+
   int _currentIndex = 0;
   DateTime? selectedOutstandingDate;
 
@@ -385,6 +391,145 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
+  Future<String?> _promptBackupPassword({
+    required bool createNew,
+    String? errorMessage,
+  }) async {
+    final passwordController = TextEditingController();
+    final confirmController = TextEditingController();
+    String? validationError = errorMessage;
+
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text(createNew ? 'Protect Your LxH ONE Backup' : 'Unlock Your LxH ONE Backup'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  createNew
+                      ? 'Create a separate Backup Password. Use the same password when restoring on another phone.'
+                      : 'Enter the Backup Password that was used on the phone where this backup was created.',
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Backup Password',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                if (createNew) ...[
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: confirmController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Confirm Backup Password',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                const Text(
+                  'Important: Keep this password safe. LxH ONE cannot recover it. If you forget it, encrypted Drive backups cannot be opened.',
+                  style: TextStyle(fontSize: 12, color: Colors.red),
+                ),
+                if (validationError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(validationError!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final password = passwordController.text;
+                if (password.isEmpty) {
+                  setDialogState(() => validationError = 'Backup Password is required.');
+                  return;
+                }
+                if (createNew && password.length < 12) {
+                  setDialogState(() => validationError = 'Use at least 12 characters for a stronger password.');
+                  return;
+                }
+                if (createNew && password != confirmController.text) {
+                  setDialogState(() => validationError = 'Both passwords do not match.');
+                  return;
+                }
+                Navigator.pop(dialogContext, password);
+              },
+              child: Text(createNew ? 'Create Password' : 'Unlock Backup'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    passwordController.dispose();
+    confirmController.dispose();
+    return result;
+  }
+
+  Future<Map<String, dynamic>?> _restoreBackupWithPassword(
+    GoogleSignInAccount account,
+  ) async {
+    final storageKey = backupPasswordStorageKey(account.email);
+    String? password = await _backupPasswordStorage.read(key: storageKey);
+    Map<String, dynamic>? backup;
+    var failedPasswordAttempts = 0;
+
+    while (true) {
+      try {
+        backup = await GoogleDriveBackupService.restoreLatest(
+          account,
+          backupPassword: password,
+        );
+        break;
+      } on BackupPasswordRequiredException {
+        password = await _promptBackupPassword(createNew: false);
+        if (password == null) {
+          throw StateError('Backup restore was cancelled. Enter the Backup Password to continue.');
+        }
+      } on BackupPasswordInvalidException {
+        failedPasswordAttempts++;
+        if (failedPasswordAttempts >= 3) {
+          throw StateError('Backup Password was incorrect three times. No cloud data was changed.');
+        }
+        password = await _promptBackupPassword(
+          createNew: false,
+          errorMessage: 'Incorrect Backup Password. Please try again.',
+        );
+        if (password == null) {
+          throw StateError('Backup restore was cancelled. No cloud data was changed.');
+        }
+      }
+    }
+
+    // A missing password means this is a first backup or a legacy plaintext
+    // backup. Upgrade it by creating the encryption password before app access.
+    if (password == null || password.isEmpty) {
+      password = await _promptBackupPassword(createNew: true);
+      if (password == null) {
+        throw StateError('Create a Backup Password before enabling encrypted Google Drive backup.');
+      }
+    }
+
+    await _backupPasswordStorage.write(key: storageKey, value: password);
+    return backup;
+  }
+
   Future<void> _activateAccount(GoogleSignInAccount account) async {
     final prefs = await SharedPreferences.getInstance();
     final prefix = accountStoragePrefix(account.email);
@@ -396,7 +541,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _driveRestoreFailed = false;
 
     try {
-      cloudBackup = await GoogleDriveBackupService.restoreLatest(account);
+      cloudBackup = await _restoreBackupWithPassword(account);
     } catch (e) {
       _driveRestoreFailed = true;
       _authError = 'Google account signed in, but Drive restore failed: ' + e.toString();
@@ -696,6 +841,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     if (account == null || _driveRestoreFailed) return;
     final prefs = await SharedPreferences.getInstance();
     final prefix = accountStoragePrefix(account.email);
+    final backupPassword = await _backupPasswordStorage.read(
+      key: backupPasswordStorageKey(account.email),
+    );
+    if (backupPassword == null || backupPassword.isEmpty) {
+      await prefs.setBool(prefix + 'unsynced_local_changes', true);
+      return;
+    }
     final hasUnsyncedLocalChanges =
         prefs.getBool(prefix + 'unsynced_local_changes') ?? false;
     try {
@@ -712,6 +864,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       await GoogleDriveBackupService.backup(
         account,
         snapshot,
+        backupPassword: backupPassword,
         createNewVersion: hasUnsyncedLocalChanges,
       );
       await prefs.setBool(prefix + 'unsynced_local_changes', false);
