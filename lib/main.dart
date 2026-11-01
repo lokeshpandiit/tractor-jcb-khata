@@ -265,7 +265,7 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
-  DateTime? selectedFilterDate;
+  DateTime? selectedOutstandingDate;
 
   List<Vehicle> vehicles = [];
   List<Person> workers = [];
@@ -820,24 +820,111 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _saveData();
   }
 
-  void _openWorkEntryModal(String vehicleType) {
+  void _openWorkEntryModal() {
+    if (vehicles.isEmpty || workers.isEmpty || clients.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Work entry se pehle Vehicle, Driver aur Party add karein.')),
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (_) => WorkEntrySheet(
-        vehicleType: vehicleType,
-        vehicles: vehicles.where((v) => v.type == vehicleType).toList(),
+        vehicles: vehicles,
         workers: workers,
         clients: clients,
         onSave: (log) {
           setState(() {
-            // A saved work record creates a bill/receivable, never a cash receipt.
+            // Work record creates customer receivable only, not a cash receipt.
             logs.insert(0, log);
           });
           _saveData();
         },
       ),
     );
+  }
+
+  Future<void> _addVehicleDialog(String type) async {
+    final nameController = TextEditingController();
+    final numberController = TextEditingController();
+    final rateController = TextEditingController();
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Add $type'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Vehicle / Machine Name'),
+              ),
+              TextField(
+                controller: numberController,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(labelText: 'Vehicle Number'),
+              ),
+              TextField(
+                controller: rateController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Default Rate / Hour (₹)'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final rate = double.tryParse(rateController.text.trim());
+              if (nameController.text.trim().isEmpty ||
+                  numberController.text.trim().isEmpty ||
+                  rate == null || rate <= 0) return;
+              Navigator.pop(dialogContext, true);
+            },
+            child: const Text('Save Vehicle'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) {
+      nameController.dispose();
+      numberController.dispose();
+      rateController.dispose();
+      return;
+    }
+    final name = nameController.text.trim();
+    final number = numberController.text.trim().toUpperCase();
+    final rate = double.tryParse(rateController.text.trim());
+    nameController.dispose();
+    numberController.dispose();
+    rateController.dispose();
+
+    if (saved != true || name.isEmpty || number.isEmpty || rate == null || rate <= 0) return;
+    if (vehicles.any((v) => v.number.trim().toUpperCase() == number)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This vehicle number is already saved.')),
+      );
+      return;
+    }
+    setState(() {
+      vehicles.add(Vehicle(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        name: name,
+        number: number,
+        type: type,
+        defaultRate: rate,
+      ));
+    });
+    await _saveData();
   }
 
   void _deleteVehicle(Vehicle v) {
@@ -1132,24 +1219,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   Widget _buildFleetTab(String type) {
     final filteredVehicles = vehicles.where((v) => v.type == type).toList();
-    final now = DateTime.now();
-    final filteredLogs = logs.where((l) {
-      if (l.vehicleType != type) return false;
-      try {
-        DateTime logDate = DateFormat('dd MMM yyyy').parse(l.date);
-        if (selectedFilterDate != null) {
-          return logDate.year == selectedFilterDate!.year &&
-                 logDate.month == selectedFilterDate!.month &&
-                 logDate.day == selectedFilterDate!.day;
-        } else {
-          final difference = now.difference(logDate).inDays;
-          return difference >= 0 && difference <= 3;
-        }
-      } catch (e) {
-        return true;
-      }
-    }).toList();
-
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -1158,128 +1227,48 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           children: [
             Text('$type Fleet List', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
-              onPressed: () => _openWorkEntryModal(type),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE65100),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => _addVehicleDialog(type),
               icon: const Icon(Icons.add),
-              label: Text('New $type Entry'),
+              label: Text('Add $type'),
             ),
           ],
         ),
         const SizedBox(height: 12),
-        ...filteredVehicles.map((v) => Card(
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: type == 'Tractor' ? Colors.green.shade100 : Colors.amber.shade100,
-              child: Icon(type == 'Tractor' ? Icons.agriculture : Icons.construction, color: Colors.brown),
-            ),
-            title: Text(v.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text('No: ${v.number} | Rate: ₹${v.defaultRate.toStringAsFixed(0)}/hr'),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
-                  onPressed: () => _editRateDialog(v),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                  onPressed: () => _deleteVehicle(v),
-                ),
-              ],
-            ),
-          ),
-        )),
-        const Divider(height: 32),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              selectedFilterDate == null 
-                  ? 'Recent $type Logs (Last 3 Days)' 
-                  : 'Logs: ${DateFormat('dd MMM yyyy').format(selectedFilterDate!)}',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            Row(
-              children: [
-                if (selectedFilterDate != null)
-                  TextButton(
-                    onPressed: () => setState(() => selectedFilterDate = null),
-                    child: const Text('Reset', style: TextStyle(color: Colors.red)),
-                  ),
-                IconButton(
-                  icon: const Icon(Icons.calendar_month, color: Color(0xFFE65100)),
-                  tooltip: 'Past Records',
-                  onPressed: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: selectedFilterDate ?? DateTime.now(),
-                      firstDate: DateTime(2023),
-                      lastDate: DateTime.now(),
-                    );
-                    if (picked != null) {
-                      setState(() => selectedFilterDate = picked);
-                    }
-                  },
-                ),
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        filteredLogs.isEmpty
-            ? const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('No entries found.')))
-            : ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: filteredLogs.length,
-                itemBuilder: (context, i) {
-                  final log = filteredLogs[i];
-                  final originalIndex = logs.indexWhere((l) => l.id == log.id);
-                  return Card(
-                    margin: const EdgeInsets.symmetric(vertical: 6),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text('${log.clientName} (${log.date})', style: const TextStyle(fontWeight: FontWeight.bold)),
-                              Row(
-                                children: [
-                                  Text('₹${log.totalAmount.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16)),
-                                  const SizedBox(width: 8),
-                                  GestureDetector(
-                                    onTap: () => _deleteLog(originalIndex, log),
-                                    child: const Icon(Icons.delete, color: Colors.red, size: 20),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text('${log.vehicleName} | No: ${log.vehicleNumber.isEmpty ? '—' : log.vehicleNumber} | Driver: ${log.driverName}'),
-                          Text('Duration: ${log.hours} hrs @ ₹${log.rate}/hr', style: TextStyle(color: Colors.grey.shade700)),
-                          const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFE65100),
-                                foregroundColor: Colors.white,
-                              ),
-                              icon: const Icon(Icons.send, size: 16),
-                              label: const Text('Send'),
-                              onPressed: () => _showSendOptions(log),
-                            ),
-                          )
-                        ],
-                      ),
-                    ),
-                  );
-                },
+        if (filteredVehicles.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text('Abhi koi vehicle saved nahi hai.')),
+          )
+        else
+          ...filteredVehicles.map((v) => Card(
+            child: ListTile(
+              leading: CircleAvatar(
+                backgroundColor: type == 'Tractor' ? Colors.green.shade100 : Colors.amber.shade100,
+                child: Icon(type == 'Tractor' ? Icons.agriculture : Icons.construction, color: Colors.brown),
               ),
+              title: Text(v.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text('No: ${v.number} | Rate: ₹${v.defaultRate.toStringAsFixed(0)}/hr'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Edit vehicle',
+                    icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
+                    onPressed: () => _editRateDialog(v),
+                  ),
+                  IconButton(
+                    tooltip: 'Delete vehicle',
+                    icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                    onPressed: () => _deleteVehicle(v),
+                  ),
+                ],
+              ),
+            ),
+          )),
       ],
     );
   }
@@ -1493,41 +1482,189 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       logs.any((log) => log.clientId == party.id) ||
       cashBook.any((entry) => entry.partyId == party.id)
     ).toList();
+
     final totalOutstanding = partiesWithActivity.fold<double>(0.0, (sum, party) {
       final due = _partyBillTotal(party.id) - _partyReceivedTotal(party.id);
       return sum + (due > 0 ? due : 0);
     });
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final visibleWorkLogs = logs.where((log) {
+      try {
+        final date = DateFormat('dd MMM yyyy').parseStrict(log.date);
+        if (selectedOutstandingDate != null) {
+          return date.year == selectedOutstandingDate!.year &&
+              date.month == selectedOutstandingDate!.month &&
+              date.day == selectedOutstandingDate!.day;
+        }
+        final age = today.difference(DateTime(date.year, date.month, date.day)).inDays;
+        return age >= 0 && age <= 2;
+      } catch (_) {
+        return false;
+      }
+    }).toList()
+      ..sort((a, b) => DateFormat('dd MMM yyyy').parse(b.date)
+          .compareTo(DateFormat('dd MMM yyyy').parse(a.date)));
+
     final unlinkedLogs = logs.where((log) => log.clientId.isEmpty).toList();
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Card(color: Colors.orange.shade50, child: ListTile(
-          title: const Text('Total ग्राहक बकाया', style: TextStyle(fontWeight: FontWeight.bold)),
-          trailing: Text('₹${totalOutstanding.toStringAsFixed(0)}',
-            style: const TextStyle(fontSize: 20, color: Colors.deepOrange, fontWeight: FontWeight.bold)),
-        )),
+        Row(
+          children: [
+            const Expanded(
+              child: Text('Work Records', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ),
+            if (selectedOutstandingDate != null)
+              TextButton(
+                onPressed: () => setState(() => selectedOutstandingDate = null),
+                child: const Text('Last 3 Days'),
+              ),
+            IconButton(
+              tooltip: 'Past Work Records Calendar',
+              icon: const Icon(Icons.calendar_month, color: Color(0xFFE65100)),
+              onPressed: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: selectedOutstandingDate ?? DateTime.now(),
+                  firstDate: DateTime(2023),
+                  lastDate: DateTime.now(),
+                );
+                if (picked != null && mounted) {
+                  setState(() => selectedOutstandingDate = picked);
+                }
+              },
+            ),
+          ],
+        ),
+        Text(
+          selectedOutstandingDate == null
+              ? 'Recent Work Records (Today + Previous 2 Days)'
+              : 'Work Records: ${DateFormat('dd MMM yyyy').format(selectedOutstandingDate!)}',
+          style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
+        ),
         const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _openWorkEntryModal,
+            icon: const Icon(Icons.add),
+            label: const Text('New Work Entry'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE65100),
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (visibleWorkLogs.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(18),
+              child: Text('Selected period mein koi Work Record nahi hai.'),
+            ),
+          )
+        else
+          ...visibleWorkLogs.map((log) {
+            final originalIndex = logs.indexWhere((item) => item.id == log.id);
+            return Card(
+              margin: const EdgeInsets.symmetric(vertical: 5),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(log.clientName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                              Text(log.date, style: TextStyle(color: Colors.grey.shade700)),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          '₹${log.totalAmount.toStringAsFixed(0)}',
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 17),
+                        ),
+                        IconButton(
+                          tooltip: 'Delete work record',
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.delete_outline, color: Colors.red),
+                          onPressed: originalIndex < 0 ? null : () => _deleteLog(originalIndex, log),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text('${log.vehicleType} • ${log.vehicleName} • No: ${log.vehicleNumber.isEmpty ? '—' : log.vehicleNumber}'),
+                    Text('Driver: ${log.driverName}'),
+                    Text('Duration: ${log.hours} hrs @ ₹${log.rate}/hr', style: TextStyle(color: Colors.grey.shade700)),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: () => _showSendOptions(log),
+                        icon: const Icon(Icons.send, size: 16),
+                        label: const Text('Send Bill'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        const Divider(height: 32),
+        Card(
+          color: Colors.orange.shade50,
+          child: ListTile(
+            title: const Text('Total ग्राहक बकाया', style: TextStyle(fontWeight: FontWeight.bold)),
+            trailing: Text(
+              '₹${totalOutstanding.toStringAsFixed(0)}',
+              style: const TextStyle(fontSize: 20, color: Colors.deepOrange, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text('Customer Outstanding Summary', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
         if (partiesWithActivity.isEmpty)
-          const Padding(padding: EdgeInsets.all(20), child: Text('Parties ke saved Work Records yahan dikhai denge.'))
+          const Padding(
+            padding: EdgeInsets.all(20),
+            child: Text('Parties ke saved Work Records yahan dikhai denge.'),
+          )
         else
           ...partiesWithActivity.map((party) {
             final bill = _partyBillTotal(party.id);
             final paid = _partyReceivedTotal(party.id);
             final due = bill - paid;
-            return Card(child: ListTile(
-              title: Text(party.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text('Bill ₹${bill.toStringAsFixed(0)}  •  Jama ₹${paid.toStringAsFixed(0)}'),
-              trailing: Text('₹${(due > 0 ? due : 0).toStringAsFixed(0)}',
-                style: TextStyle(fontWeight: FontWeight.bold, color: due > 0 ? Colors.red : Colors.green)),
-              onTap: () => _showPartyLedger(party),
-            ));
+            return Card(
+              child: ListTile(
+                title: Text(party.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text('Bill ₹${bill.toStringAsFixed(0)}  •  Jama ₹${paid.toStringAsFixed(0)}'),
+                trailing: Text(
+                  '₹${(due > 0 ? due : 0).toStringAsFixed(0)}',
+                  style: TextStyle(fontWeight: FontWeight.bold, color: due > 0 ? Colors.red : Colors.green),
+                ),
+                onTap: () => _showPartyLedger(party),
+              ),
+            );
           }),
         if (unlinkedLogs.isNotEmpty) ...[
           const SizedBox(height: 12),
-          Card(color: Colors.amber.shade50, child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text('${unlinkedLogs.length} purane Work Records kisi current Party se uniquely match nahi hue. Unka data surakshit hai, lekin Party-wise bकाया mein shamil nahi kiya gaya.'),
-          )),
+          Card(
+            color: Colors.amber.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                '${unlinkedLogs.length} purane Work Records kisi current Party se uniquely match nahi hue. Unka data surakshit hai, lekin Party-wise बकाया mein shamil nahi kiya gaya.',
+              ),
+            ),
+          ),
         ],
       ],
     );
@@ -1664,7 +1801,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 }
 
 class WorkEntrySheet extends StatefulWidget {
-  final String vehicleType;
   final List<Vehicle> vehicles;
   final List<Person> workers;
   final List<Person> clients;
@@ -1672,7 +1808,6 @@ class WorkEntrySheet extends StatefulWidget {
 
   const WorkEntrySheet({
     super.key,
-    required this.vehicleType,
     required this.vehicles,
     required this.workers,
     required this.clients,
@@ -1687,9 +1822,7 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
   Vehicle? selectedVehicle;
   Person? selectedWorker;
   Person? selectedClient;
-  
-  final machineNameCtrl = TextEditingController();
-  final machineNoCtrl = TextEditingController();
+
   final hoursCtrl = TextEditingController();
   final rateCtrl = TextEditingController();
   double calculatedTotal = 0.0;
@@ -1700,27 +1833,22 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
     super.initState();
     if (widget.vehicles.isNotEmpty) {
       selectedVehicle = widget.vehicles.first;
-      machineNameCtrl.text = selectedVehicle!.name;
-      machineNoCtrl.text = selectedVehicle!.number;
       rateCtrl.text = selectedVehicle!.defaultRate.toStringAsFixed(0);
     }
     if (widget.workers.isNotEmpty) selectedWorker = widget.workers.first;
     if (widget.clients.isNotEmpty) selectedClient = widget.clients.first;
-
     hoursCtrl.addListener(_recalculate);
     rateCtrl.addListener(_recalculate);
   }
 
   void _recalculate() {
-    final hrs = double.tryParse(hoursCtrl.text) ?? 0.0;
-    final r = double.tryParse(rateCtrl.text) ?? 0.0;
-    if (mounted) setState(() { calculatedTotal = hrs * r; });
+    final hours = double.tryParse(hoursCtrl.text) ?? 0;
+    final rate = double.tryParse(rateCtrl.text) ?? 0;
+    if (mounted) setState(() => calculatedTotal = hours * rate);
   }
 
   @override
   void dispose() {
-    machineNameCtrl.dispose();
-    machineNoCtrl.dispose();
     hoursCtrl.dispose();
     rateCtrl.dispose();
     super.dispose();
@@ -1740,30 +1868,42 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('New ${widget.vehicleType} Entry', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text('New Work Entry', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 14),
-            TextField(
-              controller: machineNameCtrl,
-              decoration: InputDecoration(labelText: '${widget.vehicleType} Name (eg. Mahindra 575)'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: machineNoCtrl,
-              decoration: const InputDecoration(labelText: 'Machine Number (eg. HR-24-A-1020)'),
+            DropdownButtonFormField<Vehicle>(
+              value: selectedVehicle,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Select Tractor / JCB'),
+              items: widget.vehicles.map((vehicle) => DropdownMenuItem(
+                value: vehicle,
+                child: Text('${vehicle.type} • ${vehicle.name} • ${vehicle.number}'),
+              )).toList(),
+              onChanged: (vehicle) {
+                setState(() {
+                  selectedVehicle = vehicle;
+                  if (vehicle != null) rateCtrl.text = vehicle.defaultRate.toStringAsFixed(0);
+                });
+              },
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<Person>(
               value: selectedWorker,
               decoration: const InputDecoration(labelText: 'Select Driver / Worker'),
-              items: widget.workers.map((w) => DropdownMenuItem(value: w, child: Text(w.name))).toList(),
-              onChanged: (w) => setState(() => selectedWorker = w),
+              items: widget.workers.map((worker) => DropdownMenuItem(
+                value: worker,
+                child: Text(worker.name),
+              )).toList(),
+              onChanged: (worker) => setState(() => selectedWorker = worker),
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<Person>(
               value: selectedClient,
               decoration: const InputDecoration(labelText: 'Select Client (Party)'),
-              items: widget.clients.map((c) => DropdownMenuItem(value: c, child: Text('${c.name} (${c.phone})'))).toList(),
-              onChanged: (c) => setState(() => selectedClient = c),
+              items: widget.clients.map((client) => DropdownMenuItem(
+                value: client,
+                child: Text('${client.name} (${client.phone})'),
+              )).toList(),
+              onChanged: (client) => setState(() => selectedClient = client),
             ),
             const SizedBox(height: 10),
             Row(
@@ -1785,7 +1925,26 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(child: Text('Work Date: ${DateFormat('dd MMM yyyy').format(selectedDate)}')),
+                TextButton.icon(
+                  icon: const Icon(Icons.calendar_month),
+                  label: const Text('Date'),
+                  onPressed: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedDate,
+                      firstDate: DateTime(2023),
+                      lastDate: DateTime.now(),
+                    );
+                    if (picked != null) setState(() => selectedDate = picked);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
@@ -1805,26 +1964,33 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
               onPressed: () {
-                if (machineNameCtrl.text.isNotEmpty && selectedWorker != null && selectedClient != null && calculatedTotal > 0) {
-                  final log = WorkLog(
-                    id: DateTime.now().toString(),
-                    date: DateFormat('dd MMM yyyy').format(selectedDate),
-                    vehicleName: machineNameCtrl.text,
-                    vehicleType: widget.vehicleType,
-                    driverName: selectedWorker!.name,
-                    clientName: selectedClient!.name,
-                    clientPhone: selectedClient!.phone,
-                    clientId: selectedClient!.id,
-                    vehicleNumber: machineNoCtrl.text.trim(),
-                    hours: double.tryParse(hoursCtrl.text) ?? 0,
-                    rate: double.tryParse(rateCtrl.text) ?? 0,
-                    totalAmount: calculatedTotal,
-                  );
-                  widget.onSave(log);
-                  Navigator.pop(context);
-                }
+                final hours = double.tryParse(hoursCtrl.text) ?? 0;
+                final rate = double.tryParse(rateCtrl.text) ?? 0;
+                if (selectedVehicle == null ||
+                    selectedWorker == null ||
+                    selectedClient == null ||
+                    hours <= 0 ||
+                    rate <= 0 ||
+                    calculatedTotal <= 0) return;
+
+                final log = WorkLog(
+                  id: DateTime.now().microsecondsSinceEpoch.toString(),
+                  date: DateFormat('dd MMM yyyy').format(selectedDate),
+                  vehicleName: selectedVehicle!.name,
+                  vehicleType: selectedVehicle!.type,
+                  driverName: selectedWorker!.name,
+                  clientName: selectedClient!.name,
+                  clientPhone: selectedClient!.phone,
+                  clientId: selectedClient!.id,
+                  vehicleNumber: selectedVehicle!.number,
+                  hours: hours,
+                  rate: rate,
+                  totalAmount: calculatedTotal,
+                );
+                widget.onSave(log);
+                Navigator.pop(context);
               },
-              child: const Text('Save Record', style: TextStyle(fontSize: 16)),
+              child: const Text('Save Work Record', style: TextStyle(fontSize: 16)),
             ),
             const SizedBox(height: 20),
           ],
@@ -1833,7 +1999,6 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
     );
   }
 }
-
 
 class DriverKhataScreen extends StatefulWidget {
   final Person driver;
