@@ -99,6 +99,7 @@ class WorkLog {
   final String vehicleName;
   final String vehicleType;
   final String driverName;
+  final String driverId;
   final String clientName;
   final String clientPhone;
   final String clientId;
@@ -113,6 +114,7 @@ class WorkLog {
     required this.vehicleName,
     required this.vehicleType,
     required this.driverName,
+    this.driverId = '',
     required this.clientName,
     required this.clientPhone,
     this.clientId = '',
@@ -124,7 +126,8 @@ class WorkLog {
 
   Map<String, dynamic> toJson() => {
     'id': id, 'date': date, 'vehicleName': vehicleName, 'vehicleType': vehicleType,
-    'driverName': driverName, 'clientName': clientName, 'clientPhone': clientPhone,
+    'driverName': driverName, 'driverId': driverId,
+    'clientName': clientName, 'clientPhone': clientPhone,
     'clientId': clientId, 'vehicleNumber': vehicleNumber,
     'hours': hours, 'rate': rate, 'totalAmount': totalAmount
   };
@@ -135,6 +138,7 @@ class WorkLog {
     vehicleName: json['vehicleName'] ?? '',
     vehicleType: json['vehicleType'] ?? '',
     driverName: json['driverName'] ?? '',
+    driverId: json['driverId'] ?? '',
     clientName: json['clientName'] ?? '',
     clientPhone: json['clientPhone'] ?? '',
     clientId: json['clientId'] ?? '',
@@ -923,6 +927,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         return WorkLog(
           id: log.id, date: log.date, vehicleName: log.vehicleName,
           vehicleType: log.vehicleType, driverName: log.driverName,
+          driverId: log.driverId,
           clientName: log.clientName, clientPhone: log.clientPhone,
           clientId: match?.id ?? '', vehicleNumber: log.vehicleNumber,
           hours: log.hours, rate: log.rate, totalAmount: log.totalAmount,
@@ -2622,6 +2627,7 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
                   vehicleName: selectedVehicle!.name,
                   vehicleType: selectedVehicle!.type,
                   driverName: selectedWorker!.name,
+                  driverId: selectedWorker!.id,
                   clientName: selectedClient!.name,
                   clientPhone: selectedClient!.phone,
                   clientId: selectedClient!.id,
