@@ -421,6 +421,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
 
   Future<void> _loadData() async {
+    // Reset in-memory collections before loading another Google account so no
+    // rows from the previously active/offline account can bleed across.
+    vehicles = [];
+    workers = [];
+    clients = [];
+    logs = [];
+    cashBook = [];
+    advanceRequests = [];
     final prefs = await SharedPreferences.getInstance();
     
     final vehiclesString = prefs.getString(_accountKey('vehicles_data'));
