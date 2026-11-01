@@ -850,7 +850,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final message = driver
         ? 'Namaste ${p.name}, Total earning: ₹${total.toStringAsFixed(0)}, Advance: ₹${_advance(p).toStringAsFixed(0)}, Payment given: ₹${_driverPaid(p).toStringAsFixed(0)}, Remaining payable: ₹${due.toStringAsFixed(0)}. - LxH ONE'
         : 'Namaste ${p.name}, Total bill: ₹${total.toStringAsFixed(0)}, Payment received: ₹${paid.toStringAsFixed(0)}, Remaining due: ₹${due.toStringAsFixed(0)}. - LxH ONE';
-    final phone = p.phone.replaceAll(RegExp(r'\\D'), '');
+    final phone = p.phone.replaceAll(RegExp(r'\D'), '');
     if (phone.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Phone number available nahi hai.'))); return; }
     final uri = Uri(scheme: 'sms', path: phone, queryParameters: {'body': message});
     try { await launchUrl(uri, mode: LaunchMode.externalApplication); }
