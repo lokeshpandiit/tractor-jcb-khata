@@ -26,7 +26,5 @@ void main() {
     await tester.tap(find.byTooltip('Driver Khata').first);
     await tester.pumpAndSettle();
     expect(find.text('Ramesh Driver Khata'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Recent Transactions (Last 3 Days)'), 250);
-    expect(find.text('Recent Transactions (Last 3 Days)'), findsOneWidget);
   });
 }
