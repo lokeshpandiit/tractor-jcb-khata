@@ -277,6 +277,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     if (_driveBackupInProgress) return;
     _driveBackupInProgress = true;
     final uploadRevision = _dataRevision;
+    var uploadCompleted = false;
     try {
     final api = await _driveApiFor(account);
     final folderId = await _getOrCreateDriveFolder(api);
@@ -285,10 +286,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final existing = await api.files.list(q: "'" + folderId + "' in parents and name = '" + dateName + "' and trashed = false", spaces: 'drive', pageSize: 10, $fields: 'files(id,name)');
     final media = gdrive.Media(file.openRead(), await file.length(), contentType: 'application/json');
     if (existing.files != null && existing.files!.isNotEmpty) {
-      await api.files.update(gdrive.File(name: dateName), existing.files!.first.id!, uploadMedia: media);
+      final matchingFiles = existing.files!;
+      await api.files.update(gdrive.File(name: dateName), matchingFiles.first.id!, uploadMedia: media);
+      // Clean up duplicates from any earlier versions: keep one dated file only.
+      for (final duplicate in matchingFiles.skip(1)) {
+        if (duplicate.id != null) await api.files.delete(duplicate.id!);
+      }
     } else {
       await api.files.create(gdrive.File(name: dateName, parents: [folderId]), uploadMedia: media);
     }
+    uploadCompleted = true;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('last_drive_backup_date', DateFormat('yyyy-MM-dd').format(DateTime.now()));
     await prefs.setString('last_drive_backup_account', account.email);
@@ -300,7 +307,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     } finally {
       _driveBackupInProgress = false;
       final latestPrefs = await SharedPreferences.getInstance();
-      if (latestPrefs.getBool('drive_backup_pending') == true && mounted) {
+      if (uploadCompleted &&
+          latestPrefs.getBool('drive_backup_pending') == true &&
+          mounted) {
         _scheduleDriveBackup();
       }
     }
@@ -481,6 +490,22 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _scheduleDriveBackup();
   }
 
+  void _recordCashMovement({
+    required String title,
+    required double amount,
+    required bool cashIn,
+  }) {
+    cashBook.insert(
+      0,
+      CashEntry(
+        title: title,
+        amount: amount,
+        type: cashIn ? 'Cash In' : 'Cash Out',
+        date: DateFormat('dd MMM yyyy').format(DateTime.now()),
+      ),
+    );
+  }
+
   void _openWorkEntryModal(String vehicleType) {
     if (vehicles.isEmpty || workers.isEmpty || clients.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pehle machine, driver aur client add karein.')));
@@ -607,58 +632,119 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  // Fixed Direct WhatsApp Launcher
-  void _sendWhatsApp(WorkLog log) async {
-    final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
-    final msg = '*Tractor/JCB Work Slip*\n\n'
-        'Party: *${log.clientName}*\n'
-        'Date: ${log.date}\n'
-        'Machine: ${log.vehicleName}\n'
-        'Driver: ${log.driverName}\n'
-        'Total Time: *${log.hours} Hours*\n'
-        'Rate: ₹${log.rate}/hr\n'
-        '-------------------------\n'
-        '💰 *Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}*';
+  String? _normalizedIndianPhone(String rawPhone) {
+    var digits = rawPhone.replaceAll(RegExp(r'\\D'), '');
+    if (digits.startsWith('0') && digits.length == 11) {
+      digits = digits.substring(1);
+    }
+    if (digits.length == 10) digits = '91$digits';
+    if (digits.length != 12 || !digits.startsWith('91')) return null;
+    return digits;
+  }
 
-    final uri = Uri.parse('https://wa.me/91$cleanPhone?text=${Uri.encodeComponent(msg)}');
-    
+  String _workSlipMessage(WorkLog log) {
+    return 'TRACTOR / JCB WORK SLIP\\n'
+        'Party: ${log.clientName}\\n'
+        'Date: ${log.date}\\n'
+        'Machine: ${log.vehicleName} (${log.vehicleType})\\n'
+        'Driver: ${log.driverName}\\n'
+        'Working Hours: ${log.hours}\\n'
+        'Rate: ₹${log.rate.toStringAsFixed(0)} per hour\\n'
+        'Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}\\n'
+        '- LxH ONE';
+  }
+
+  Future<void> _sendWhatsApp(WorkLog log) async {
+    final phone = _normalizedIndianPhone(log.clientPhone);
+    if (phone == null) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Client ka valid 10-digit mobile number nahi hai.')),
+      );
+      return;
+    }
+    final uri = Uri.https('wa.me', '/$phone', {'text': _workSlipMessage(log)});
     try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('WhatsApp could not be opened!')),
+          const SnackBar(content: Text('WhatsApp could not be opened.')),
         );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('WhatsApp open nahi hua: $e')),
       );
     }
   }
 
-  void _sendSMS(WorkLog log) async {
-    final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
-    final message = 'Namaste ${log.clientName}, aapke yahan ${log.date} ko ${log.vehicleName} ne ${log.hours} ghante kaam kiya @ ₹${log.rate}/hr. Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}. - LxH ONE';
-    
+  Future<void> _sendSMS(WorkLog log) async {
+    final phone = _normalizedIndianPhone(log.clientPhone);
+    if (phone == null) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Client ka valid 10-digit mobile number nahi hai.')),
+      );
+      return;
+    }
     final uri = Uri(
       scheme: 'sms',
-      path: cleanPhone,
-      queryParameters: {'body': message},
+      path: '+$phone',
+      queryParameters: {'body': _workSlipMessage(log)},
     );
-
     try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        final fallbackUri = Uri.parse('sms:$cleanPhone?body=${Uri.encodeComponent(message)}');
-        await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('SMS app open nahi hua.')),
+        );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open SMS: $e')),
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('SMS app open nahi hua: $e')),
       );
     }
+  }
+
+  Widget _clientWorkSlipTile(WorkLog log) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text('${log.date} • ${log.vehicleName}'),
+      subtitle: Text(
+        '${log.hours} hrs × ₹${log.rate.toStringAsFixed(0)} • Bill ₹${log.totalAmount.toStringAsFixed(0)}',
+      ),
+      trailing: Wrap(
+        spacing: 0,
+        children: [
+          IconButton(
+            tooltip: 'Send Work Slip on WhatsApp',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.chat, color: Colors.green),
+            onPressed: () => _sendWhatsApp(log),
+          ),
+          IconButton(
+            tooltip: 'Send Work Slip by SMS',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.sms, color: Colors.blue),
+            onPressed: () => _sendSMS(log),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _driverWorkHistoryTile(WorkLog log) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text('${log.date} • ${log.vehicleName}'),
+      subtitle: Text(
+        'Party: ${log.clientName} • ${log.hours} hrs • Client bill ₹${log.totalAmount.toStringAsFixed(0)}',
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _driveBackupDebounce?.cancel();
+    super.dispose();
   }
 
   @override
@@ -833,13 +919,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           _ledgerLine('Total Earning (Manual)',_earned(p)),_ledgerLine('Advance Given',_advance(p)),_ledgerLine('Other Payment Given',_driverPaid(p)),_ledgerLine('Remaining Payable',_driverDue(p)),
           const Divider(),const Text('Earning / Payment History',style:TextStyle(fontWeight:FontWeight.bold)),
           ...ledgerEntries.where((e)=>e.personName==p.name&&e.kind.startsWith('driver')).map((e)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹${e.amount.toStringAsFixed(0)}'))),
+          const Divider(),
+          const Text('Work History (Assigned Jobs)',style:TextStyle(fontWeight:FontWeight.bold)),
+          ...logs.where((l)=>l.driverName==p.name).map(_driverWorkHistoryTile),
+          if (logs.every((l)=>l.driverName!=p.name))
+            const Padding(padding:EdgeInsets.symmetric(vertical:8),child:Text('Abhi koi work entry assign nahi hai.')),
           OutlinedButton(onPressed:()async{await _addPersonEntry('driverEarning',p);refresh((){});},child:const Text('Add Earning')),
           OutlinedButton(onPressed:()async{await _addPersonEntry('driverAdvance',p);refresh((){});},child:const Text('Add Advance')),
           OutlinedButton(onPressed:()async{await _addPersonEntry('driverPayment',p);refresh((){});},child:const Text('Add Payment Given')),
         ]else...[
           _ledgerLine('Total Bill',_bill(p)),_ledgerLine('Payment Received',_received(p)),_ledgerLine('Remaining Due',_clientDue(p)),
           const Divider(),const Text('Work History',style:TextStyle(fontWeight:FontWeight.bold)),
-          ...logs.where((l)=>l.clientName==p.name).map((l)=>ListTile(contentPadding:EdgeInsets.zero,title:Text('${l.date} • ${l.vehicleName}'),subtitle:Text('${l.hours} hrs × ₹${l.rate.toStringAsFixed(0)}'),trailing:Text('₹${l.totalAmount.toStringAsFixed(0)}'))),
+          ...logs.where((l)=>l.clientName==p.name).map(_clientWorkSlipTile),
           const Divider(),const Text('Payment History',style:TextStyle(fontWeight:FontWeight.bold)),
           ...ledgerEntries.where((e)=>e.kind=='clientPayment'&&e.personName==p.name).map((e)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹${e.amount.toStringAsFixed(0)}'))),
           OutlinedButton(onPressed:()async{await _addPersonEntry('clientPayment',p);refresh((){});},child:const Text('Add Payment Received')),
@@ -864,7 +955,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       TextField(controller:note,decoration:const InputDecoration(labelText:'Note (optional)')),
     ]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancel')),ElevatedButton(onPressed:(){
       final value=double.tryParse(amount.text)??0;if(value<=0)return;
-      setState(()=>ledgerEntries.insert(0,LedgerEntry(id:DateTime.now().microsecondsSinceEpoch.toString(),kind:kind,personName:p.name,title:note.text.trim().isEmpty?names[kind]!:note.text.trim(),amount:value,date:DateFormat('dd MMM yyyy').format(DateTime.now()))));
+      final entryTitle = note.text.trim().isEmpty ? names[kind]! : note.text.trim();
+      setState(() {
+        ledgerEntries.insert(0,LedgerEntry(id:DateTime.now().microsecondsSinceEpoch.toString(),kind:kind,personName:p.name,title:entryTitle,amount:value,date:DateFormat('dd MMM yyyy').format(DateTime.now())));
+        if (kind == 'clientPayment') {
+          _recordCashMovement(title: 'Client payment received - ${p.name}', amount: value, cashIn: true);
+        } else if (kind == 'driverAdvance' || kind == 'driverPayment') {
+          _recordCashMovement(title: '${names[kind]} - ${p.name}', amount: value, cashIn: false);
+        }
+      });
       _saveData();Navigator.pop(ctx);
     },child:const Text('Save'))]));
   }
@@ -894,32 +993,118 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
 
   Widget _buildCashTab() {
-    final expenses=ledgerEntries.where((e)=>e.kind=='expense').toList();
-    final loans=ledgerEntries.where((e)=>e.kind=='loan').toList();
-    final expenseTotal=expenses.fold(0.0,(v,e)=>v+e.amount);
-    final loanPrincipal=loans.fold(0.0,(v,e)=>v+e.amount);
-    final loanInterest=loans.fold(0.0,(v,e)=>v+e.interest);
-    return ListView(padding:const EdgeInsets.all(16),children:[
-      const Text('Extra Kharch / Len-Den',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
-      const SizedBox(height:12),
-      Card(child:Padding(padding:const EdgeInsets.all(14),child:Column(children:[
-        _ledgerLine('Total Expense',expenseTotal),
-        _ledgerLine('Loan Principal Given',loanPrincipal),
-        _ledgerLine('Expected Interest',loanInterest),
-        _ledgerLine('Expected Total Return',loanPrincipal+loanInterest),
-      ]))),
-      Wrap(spacing:8,runSpacing:8,children:[
-        ElevatedButton.icon(onPressed:()=>_addGeneralEntry('expense'),icon:const Icon(Icons.remove_circle),label:const Text('Add Expense')),
-        ElevatedButton.icon(onPressed:()=>_addGeneralEntry('loan'),icon:const Icon(Icons.account_balance),label:const Text('Give Loan')),
-      ]),
-      const SizedBox(height:16),
-      const Text('Expenses',style:TextStyle(fontWeight:FontWeight.bold)),
-      ...expenses.map((e)=>ListTile(leading:const Icon(Icons.receipt_long,color:Colors.red),title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹${e.amount.toStringAsFixed(0)}'))),
-      const Divider(),
-      const Text('Loan Ledger',style:TextStyle(fontWeight:FontWeight.bold)),
-      ...loans.map((e)=>ListTile(leading:const Icon(Icons.account_balance,color:Colors.blue),title:Text(e.title),subtitle:Text('${e.date} • Principal ₹${e.amount.toStringAsFixed(0)} • Interest ₹${e.interest.toStringAsFixed(0)}'),trailing:Text('₹${(e.amount+e.interest).toStringAsFixed(0)}'))),
-      if(expenses.isEmpty&&loans.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Center(child:Text('Abhi koi expense ya loan record nahi hai.'))),
-    ]);
+    final expenses = ledgerEntries.where((e) => e.kind == 'expense').toList();
+    final loans = ledgerEntries.where((e) => e.kind == 'loan').toList();
+    final expenseTotal = expenses.fold(0.0, (v, e) => v + e.amount);
+    final loanPrincipal = loans.fold(0.0, (v, e) => v + e.amount);
+    final loanInterest = loans.fold(0.0, (v, e) => v + e.interest);
+
+    bool isCashIn(CashEntry entry) => entry.type.toLowerCase() == 'cash in';
+    final cashInEntries = cashBook.where(isCashIn).toList();
+    final cashOutEntries = cashBook.where((e) => !isCashIn(e)).toList();
+    final cashInTotal = cashInEntries.fold(0.0, (v, e) => v + e.amount);
+    final cashOutTotal = cashOutEntries.fold(0.0, (v, e) => v + e.amount);
+    final workBilled = logs.fold(0.0, (v, e) => v + e.totalAmount);
+    final clientPayments = ledgerEntries
+        .where((e) => e.kind == 'clientPayment')
+        .fold(0.0, (v, e) => v + e.amount);
+    final clientOutstanding = workBilled - clientPayments;
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text('Extra Kharch / Len-Den', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(children: [
+              _ledgerLine('Total Expense', expenseTotal),
+              _ledgerLine('Loan Principal Given', loanPrincipal),
+              _ledgerLine('Expected Interest', loanInterest),
+              _ledgerLine('Expected Total Return', loanPrincipal + loanInterest),
+            ]),
+          ),
+        ),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          ElevatedButton.icon(
+            onPressed: () => _addGeneralEntry('expense'),
+            icon: const Icon(Icons.remove_circle),
+            label: const Text('Add Expense'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => _addGeneralEntry('loan'),
+            icon: const Icon(Icons.account_balance),
+            label: const Text('Give Loan'),
+          ),
+        ]),
+        const SizedBox(height: 16),
+        const Text('Expenses Ledger', style: TextStyle(fontWeight: FontWeight.bold)),
+        ...expenses.map((e) => ListTile(
+          leading: const Icon(Icons.receipt_long, color: Colors.red),
+          title: Text(e.title),
+          subtitle: Text(e.date),
+          trailing: Text('₹${e.amount.toStringAsFixed(0)}'),
+        )),
+        const Divider(),
+        const Text('Loan Ledger', style: TextStyle(fontWeight: FontWeight.bold)),
+        ...loans.map((e) => ListTile(
+          leading: const Icon(Icons.account_balance, color: Colors.blue),
+          title: Text(e.title),
+          subtitle: Text('${e.date} • Principal ₹${e.amount.toStringAsFixed(0)} • Interest ₹${e.interest.toStringAsFixed(0)}'),
+          trailing: Text('₹${(e.amount + e.interest).toStringAsFixed(0)}'),
+        )),
+        const SizedBox(height: 18),
+        const Divider(),
+        const Text('Cash Book', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(children: [
+              _ledgerLine('Cash Received', cashInTotal),
+              _ledgerLine('Cash Paid', cashOutTotal),
+              _ledgerLine('Net Cash Movement', cashInTotal - cashOutTotal),
+            ]),
+          ),
+        ),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(children: [
+              _ledgerLine('Work Billed (Credit)', workBilled),
+              _ledgerLine('Client Payments Received', clientPayments),
+              _ledgerLine('Client Outstanding', clientOutstanding),
+              const SizedBox(height: 6),
+              const Text(
+                'Work Entry ko cash receipt nahi maana gaya hai. Client se payment milne par hi Cash Received mein add hota hai.',
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+            ]),
+          ),
+        ),
+        const Text('Cash Transactions', style: TextStyle(fontWeight: FontWeight.bold)),
+        ...cashBook.map((e) {
+          final cashIn = isCashIn(e);
+          return ListTile(
+            leading: Icon(
+              cashIn ? Icons.call_received : Icons.call_made,
+              color: cashIn ? Colors.green : Colors.red,
+            ),
+            title: Text(e.title),
+            subtitle: Text('${e.date} • ${cashIn ? "Cash In" : "Cash Out"}'),
+            trailing: Text(
+              '${cashIn ? "+" : "-"}₹${e.amount.toStringAsFixed(0)}',
+              style: TextStyle(color: cashIn ? Colors.green : Colors.red, fontWeight: FontWeight.bold),
+            ),
+          );
+        }),
+        if (cashBook.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(child: Text('Abhi koi cash transaction nahi hai.')),
+          ),
+      ],
+    );
   }
 
   Future<void> _addGeneralEntry(String kind) async {
@@ -938,7 +1123,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           final value=double.tryParse(amount.text)??0,interestValue=double.tryParse(interest.text)??0;
           final who=person.text.trim();
           if(value<=0||(loan&&who.isEmpty))return;
-          setState(()=>ledgerEntries.insert(0,LedgerEntry(id:DateTime.now().microsecondsSinceEpoch.toString(),kind:kind,personName:loan?who:'',title:loan?who:(note.text.trim().isEmpty?'Expense':note.text.trim()),amount:value,interest:interestValue,date:DateFormat('dd MMM yyyy').format(DateTime.now()))));
+          final entryTitle = loan ? who : (note.text.trim().isEmpty ? 'Expense' : note.text.trim());
+          setState(() {
+            ledgerEntries.insert(0,LedgerEntry(id:DateTime.now().microsecondsSinceEpoch.toString(),kind:kind,personName:loan?who:'',title:entryTitle,amount:value,interest:interestValue,date:DateFormat('dd MMM yyyy').format(DateTime.now())));
+            _recordCashMovement(
+              title: loan ? 'Loan given - $who' : 'Expense - $entryTitle',
+              amount: value,
+              cashIn: false,
+            );
+          });
           _saveData();Navigator.pop(ctx);
         },child:const Text('Save')),
       ],
@@ -969,7 +1162,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   cashBook.insert(0, CashEntry(
                     title: titleController.text.isEmpty ? 'Kharcha' : titleController.text,
                     amount: double.tryParse(amountController.text) ?? 0,
-                    type: 'Kharcha',
+                    type: 'Cash Out',
                     date: DateFormat('dd MMM yyyy').format(DateTime.now()),
                   ));
                 });
