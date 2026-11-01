@@ -482,30 +482,61 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       }).toList();
     }
 
+    bool isLegacyAutoJama(CashEntry entry) {
+      if (entry.type != 'Jama' || entry.partyId.isNotEmpty) return false;
+      return logs.any((log) =>
+        entry.title == log.clientName + ' (' + log.vehicleName + ')' &&
+        entry.amount == log.totalAmount &&
+        entry.date == log.date
+      );
+    }
+
     final cashString = prefs.getString(_accountKey('cash_data'));
     final migrationDone = prefs.getBool(_accountKey('khata_migration_v2_done')) ?? false;
+    final archivedString = prefs.getString(_accountKey('legacy_auto_jama_data'));
+    final archivedEntries = archivedString == null
+        ? <CashEntry>[]
+        : (jsonDecode(archivedString) as List).map((e) => CashEntry.fromJson(e)).toList();
+
     if (cashString != null) {
       final List decoded = jsonDecode(cashString);
       final loadedEntries = decoded.map((e) => CashEntry.fromJson(e)).toList();
-      if (!migrationDone) {
-        // Only remove bill rows created by the old buggy auto-Jama logic.
-        // Real receipts are retained even when old data is being migrated.
-        final legacyAutoJama = loadedEntries.where((entry) =>
-          entry.type == 'Jama' &&
-          entry.partyId.isEmpty &&
-          logs.any((log) =>
-            entry.title == log.clientName + ' (' + log.vehicleName + ')' &&
-            entry.amount == log.totalAmount &&
-            entry.date == log.date
-          )
-        ).toList();
-        await prefs.setString(_accountKey('legacy_auto_jama_data'),
-            jsonEncode(legacyAutoJama.map((e) => e.toJson()).toList()));
-        cashBook = loadedEntries.where((entry) => !legacyAutoJama.contains(entry)).toList();
+      cashBook = loadedEntries;
+
+      // A previous app revision archived every Jama entry, including real
+      // receipts. Recover genuine receipts from that archive, but leave only
+      // the exact old auto-generated bill rows archived.
+      final genuineArchivedReceipts = archivedEntries.where((entry) =>
+        entry.type == 'Jama' && !isLegacyAutoJama(entry)
+      ).toList();
+      for (final archivedReceipt in genuineArchivedReceipts) {
+        final alreadyPresent = cashBook.any((entry) =>
+          entry.id == archivedReceipt.id ||
+          (entry.title == archivedReceipt.title &&
+           entry.amount == archivedReceipt.amount &&
+           entry.date == archivedReceipt.date &&
+           entry.partyId == archivedReceipt.partyId)
+        );
+        if (!alreadyPresent) cashBook.add(archivedReceipt);
+      }
+
+      final legacyAutoJama = <CashEntry>[
+        ...archivedEntries.where(isLegacyAutoJama),
+        ...loadedEntries.where(isLegacyAutoJama),
+      ];
+      final uniqueLegacyAutoJama = <CashEntry>[];
+      for (final entry in legacyAutoJama) {
+        if (!uniqueLegacyAutoJama.any((saved) => saved.id == entry.id)) {
+          uniqueLegacyAutoJama.add(entry);
+        }
+      }
+      await prefs.setString(_accountKey('legacy_auto_jama_data'),
+          jsonEncode(uniqueLegacyAutoJama.map((e) => e.toJson()).toList()));
+
+      if (!migrationDone || genuineArchivedReceipts.isNotEmpty) {
+        cashBook.removeWhere(isLegacyAutoJama);
         await prefs.setString(_accountKey('cash_data'),
             jsonEncode(cashBook.map((e) => e.toJson()).toList()));
-      } else {
-        cashBook = loadedEntries;
       }
     }
     final advanceString = prefs.getString(_accountKey('advance_requests_data'));
