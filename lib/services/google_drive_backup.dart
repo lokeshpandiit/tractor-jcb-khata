@@ -293,9 +293,6 @@ void lxhDailyBackupDispatcher() {
       final accessToken = auth.accessToken;
       if (accessToken == null || accessToken.isEmpty) return false;
       final prefix = accountStoragePrefix(email);
-      if (!(prefs.getBool(prefix + 'account_initialized') ?? false)) {
-        return true;
-      }
 
       // If an earlier foreground restore failed, complete it before uploading
       // anything so an empty device cannot overwrite a real cloud backup.
@@ -319,6 +316,11 @@ void lxhDailyBackupDispatcher() {
           }
         }
         await prefs.setBool(prefix + 'drive_restore_pending', false);
+        await prefs.setBool(prefix + 'account_initialized', true);
+      }
+
+      if (!(prefs.getBool(prefix + 'account_initialized') ?? false)) {
+        return true;
       }
 
       final snapshot = <String, dynamic>{};
