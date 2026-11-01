@@ -830,9 +830,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
 
   String _defaultCustomerPaymentSmsTemplate() =>
-      'Namaste {partyName}, total work bill ₹{billTotal} tha. Pehle jama ₹{previousPaid}, abhi prapt ₹{paidNow}, kul jama ₹{totalPaid}. Baki ₹{balanceDue}{creditNote}. - LxH ONE';
+      'Namaste {partyName}, total work bill ₹{billTotal} tha. Pehle jama ₹{previousPaid}, abhi prapt ₹{paidNow}, kul jama ₹{totalPaid}. Baki ₹{balanceDue}. {balanceStatus}{creditNote} - LxH ONE';
   String _defaultCustomerPaymentWhatsAppTemplate() =>
-      '*LxH ONE Payment Receipt*\n\nParty: *{partyName}*\nTotal Work Bill: ₹{billTotal}\nPrevious Jama: ₹{previousPaid}\nToday Received: *₹{paidNow}*\nTotal Jama: ₹{totalPaid}\n*Remaining Balance: ₹{balanceDue}*{creditNote}\nDate: {date}\n{paymentDetails}';
+      '*LxH ONE Payment Receipt*\n\nParty: *{partyName}*\nTotal Work Bill: ₹{billTotal}\nPrevious Jama: ₹{previousPaid}\nToday Received: *₹{paidNow}*\nTotal Jama: ₹{totalPaid}\n*Remaining Balance: ₹{balanceDue}*\n{balanceStatus}{creditNote}\nDate: {date}\n{paymentDetails}';
   String _defaultDriverStatementSmsTemplate() =>
       'Namaste {driverName}, {date} tak total salary due ₹{totalSalaryDue}, salary paid ₹{salaryPaid}, advance ₹{advanceTaken}, other payment ₹{otherPayments}. Total received ₹{totalPaid}. Balance: {signedBalance}. {balanceStatus}. Latest: {latestEntryType} ₹{latestEntryAmount} ({latestEntryReason}). - LxH ONE';
   String _defaultDriverStatementWhatsAppTemplate() =>
