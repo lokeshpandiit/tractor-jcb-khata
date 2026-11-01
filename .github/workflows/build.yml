@@ -83,6 +83,9 @@ jobs:
       - name: Analyze Dart Code
         run: flutter analyze --no-pub
 
+      - name: Run Flutter Tests
+        run: flutter test --no-pub
+
       - name: Build Release APKs
         run: flutter build apk --release --split-per-abi
 
