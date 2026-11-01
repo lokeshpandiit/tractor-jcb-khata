@@ -1081,7 +1081,7 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
       .where((entry) => entry.type == type)
       .fold(0.0, (sum, entry) => sum + entry.amount);
 
-  String _money(double amount) => '₹\${amount.toStringAsFixed(0)}';
+  String _money(double amount) => '₹${amount.toStringAsFixed(0)}';
 
   Future<void> _setSalary() async {
     final amountController = TextEditingController(
@@ -1309,7 +1309,7 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('\${widget.driver.name} Khata'),
+        title: Text('${widget.driver.name} Khata'),
         backgroundColor: const Color(0xFFE65100),
         foregroundColor: Colors.white,
       ),
@@ -1324,7 +1324,7 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Salary: \${_money(widget.driver.salaryAmount)} / \${widget.driver.salaryType}',
+                    'Salary: ${_money(widget.driver.salaryAmount)} / ${widget.driver.salaryType}',
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                   const SizedBox(height: 8),
@@ -1373,7 +1373,7 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
                 child: Text(
                   selectedDate == null
                       ? 'Recent Transactions (Last 3 Days)'
-                      : 'Transactions: \${DateFormat('dd MMM yyyy').format(selectedDate!)}',
+                      : 'Transactions: ${DateFormat('dd MMM yyyy').format(selectedDate!)}',
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                 ),
               ),
@@ -1409,10 +1409,10 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
                     ),
                   ),
                   title: Text(entry.type, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('\${entry.reason}\\n\${entry.date}'),
+                  subtitle: Text('${entry.reason}\\n${entry.date}'),
                   isThreeLine: true,
                   trailing: Text(
-                    '\$sign \${_money(entry.amount)}',
+                    '$sign ${_money(entry.amount)}',
                     style: TextStyle(color: color, fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -1421,7 +1421,7 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
           const SizedBox(height: 12),
           if (otherPayments > 0)
             Text(
-              'Other payments recorded: \${_money(otherPayments)}',
+              'Other payments recorded: ${_money(otherPayments)}',
               style: TextStyle(color: Colors.grey.shade700),
             ),
         ],
