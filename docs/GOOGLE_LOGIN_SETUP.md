@@ -14,7 +14,7 @@ It does not use Firebase Authentication.
 ## Google Cloud Console
 
 1. Open https://console.cloud.google.com/ and select or create a Google Cloud project.
-2. In APIs & Services > Library, enable **Google Drive API**.
+2. In APIs & Services > Library, enable **Google Drive API** and **Google Sheets API**.
 3. Open Google Auth Platform > Branding. Set the app name to **LxH ONE**, choose a support email, and complete the contact details.
 4. Open Google Auth Platform > Audience. While testing, choose External (if this is a personal app) and add the Google accounts that will test the app under Test users.
 5. In Google Auth Platform > Data Access, ensure the app is allowed to request the Drive scope:
@@ -51,6 +51,24 @@ The workflow now fails fast if any required secret is missing. It will not uploa
 ## Important installation note
 
 The already-generated V3 APKs were signed with a temporary Android Debug certificate. The new V3 release will be signed with the permanent LxH ONE key above. Android will not install it as an in-place update over a differently signed APK. Before replacing an installed debug-signed APK, export or otherwise safely preserve its local app data. Do not uninstall an app with data you need to keep until a verified backup/export is available.
+
+## Per-customer and per-driver Google Sheets ledger
+
+The app creates one Google Spreadsheet in the signed-in Google account. It contains:
+
+- Master Summary
+- Work Records
+- Cash Book
+- Expenses
+- Advance Requests
+- One dedicated tab for each customer (customer work bills, received payments, running balance)
+- One dedicated tab for each driver/worker (work assignments, hours and machine, salary due, salary paid, advances, other payments, running salary balance)
+
+The spreadsheet is managed by the app. On each successful sync, LxH ONE clears and rebuilds the managed tabs from the saved local snapshot. This keeps retries idempotent and avoids duplicate rows. Do not manually type records into these generated tabs; add transactions in the app instead.
+
+The Sheets API uses the existing `https://www.googleapis.com/auth/drive.file` scope. Enable the Google Sheets API in the same Google Cloud project; no broader full-Drive or full-Sheets scope is requested.
+
+If Sheets sync is unavailable, the app keeps the local save and encrypted Drive backup, and marks Google Sheets sync as pending. It retries on later saves and the daily background task. The Backup & Restore screen includes the spreadsheet link, last sync time and a manual Sync Google Sheets Now action.
 
 ## Encrypted Drive backup password
 
