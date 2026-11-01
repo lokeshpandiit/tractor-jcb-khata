@@ -52,6 +52,24 @@ The workflow now fails fast if any required secret is missing. It will not uploa
 
 The already-generated V3 APKs were signed with a temporary Android Debug certificate. The new V3 release will be signed with the permanent LxH ONE key above. Android will not install it as an in-place update over a differently signed APK. Before replacing an installed debug-signed APK, export or otherwise safely preserve its local app data. Do not uninstall an app with data you need to keep until a verified backup/export is available.
 
+## Encrypted Drive backup password
+
+LxH ONE encrypts every new backup on the device before uploading it to Drive:
+
+- AES-256-GCM authenticated encryption.
+- PBKDF2-HMAC-SHA256 key derivation with a fresh random 16-byte salt for each backup.
+- A new random AES-GCM nonce is generated for every encryption.
+- The backup password is stored only in the device's secure storage. It is not uploaded to Drive or stored in SharedPreferences.
+- The same backup password is required to restore that account's backup on another phone.
+- Use at least 12 characters. A long, unique passphrase is recommended.
+- If the password is forgotten, encrypted backups cannot be decrypted by LxH ONE or Google. Keep it in a trusted password manager or another safe place.
+
+Existing unencrypted V3 backup files remain readable during the upgrade. Once the app has accepted or created the backup password, the next successful upload is encrypted. New uploads are encrypted by default.
+
+On a new phone, sign in with the same Google account, then enter the Backup Password used on the first phone. If there is no previous backup for that account, create a new Backup Password and confirm it.
+
+Do not share the Backup Password with anyone. Google account access and the backup password are two separate protections.
+
 ## Verification still required on a physical device
 
 - Sign in using a Google account listed as a Test user.
