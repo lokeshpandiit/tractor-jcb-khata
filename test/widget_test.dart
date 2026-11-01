@@ -21,6 +21,20 @@ void main() {
     expect(find.text('Worker'), findsOneWidget);
     expect(find.text('Parties'), findsOneWidget);
     expect(find.text('Khata'), findsOneWidget);
+
+    // Fleet folders contain only vehicle master information.
+    expect(find.text('Tractor Fleet List'), findsOneWidget);
+    expect(find.text('Add Tractor'), findsOneWidget);
+    expect(find.textContaining('Recent Tractor Logs'), findsNothing);
+
+    // Work history and the new work-entry action live under Customer Outstanding.
+    await tester.tap(find.text('Khata').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ग्राहक बकाया'));
+    await tester.pumpAndSettle();
+    expect(find.text('Recent Work Records (Today + Previous 2 Days)'), findsOneWidget);
+    expect(find.text('New Work Entry'), findsOneWidget);
+
     await tester.tap(find.text('Worker').last);
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Driver Khata').first);
