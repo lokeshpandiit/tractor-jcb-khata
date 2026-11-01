@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -281,6 +282,112 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
+  Future<void> _importBackupFile() async {
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+        withData: true,
+      );
+      if (picked == null || picked.files.isEmpty) return;
+      final bytes = picked.files.single.bytes;
+      if (bytes == null) throw Exception('Selected file could not be read.');
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map<String, dynamic> ||
+          decoded['app'] != 'LxH ONE' ||
+          decoded['schemaVersion'] != 1) {
+        throw Exception('This is not a supported LxH ONE backup file.');
+      }
+
+      List<Map<String, dynamic>> readList(String key) {
+        final value = decoded[key];
+        if (value is! List) throw Exception('Backup is missing "$key" data.');
+        return value.map((item) {
+          if (item is! Map) throw Exception('Backup contains invalid "$key" data.');
+          return Map<String, dynamic>.from(item);
+        }).toList();
+      }
+
+      // Parse every section before touching current local data.
+      final restoredVehicles = readList('vehicles').map(Vehicle.fromJson).toList();
+      final restoredWorkers = readList('workers').map(Person.fromJson).toList();
+      final restoredClients = readList('clients').map(Person.fromJson).toList();
+      final restoredLogs = readList('workLogs').map(WorkLog.fromJson).toList();
+      final restoredCash = readList('cashBook').map(CashEntry.fromJson).toList();
+
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Restore Backup?'),
+          content: Text(
+            'Backup date: ${decoded['createdAtUtc'] ?? 'Unknown'}\\n\\n'
+            'This will replace the current data on this phone with the backup data. '
+            'Your current data will be overwritten. Continue only if this is the correct backup.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Restore Data'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      // Keep a rollback snapshot before replacing any current local keys.
+      final rollback = <String, String?>{
+        'vehicles_data': prefs.getString('vehicles_data'),
+        'workers_data': prefs.getString('workers_data'),
+        'clients_data': prefs.getString('clients_data'),
+        'logs_data': prefs.getString('logs_data'),
+        'cash_data': prefs.getString('cash_data'),
+      };
+      try {
+        await prefs.setString('vehicles_data', jsonEncode(restoredVehicles.map((e) => e.toJson()).toList()));
+        await prefs.setString('workers_data', jsonEncode(restoredWorkers.map((e) => e.toJson()).toList()));
+        await prefs.setString('clients_data', jsonEncode(restoredClients.map((e) => e.toJson()).toList()));
+        await prefs.setString('logs_data', jsonEncode(restoredLogs.map((e) => e.toJson()).toList()));
+        await prefs.setString('cash_data', jsonEncode(restoredCash.map((e) => e.toJson()).toList()));
+      } catch (_) {
+        for (final entry in rollback.entries) {
+          if (entry.value == null) {
+            await prefs.remove(entry.key);
+          } else {
+            await prefs.setString(entry.key, entry.value!);
+          }
+        }
+        rethrow;
+      }
+
+      setState(() {
+        vehicles = restoredVehicles;
+        workers = restoredWorkers;
+        clients = restoredClients;
+        logs = restoredLogs;
+        cashBook = restoredCash;
+        selectedFilterDate = null;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Backup restored successfully. All records are back in their sections.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not restore backup: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('vehicles_data', jsonEncode(vehicles.map((e) => e.toJson()).toList()));
@@ -505,6 +612,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     return Scaffold(
       appBar: AppBar(
         actions: [
+          IconButton(
+            tooltip: 'Import / Restore Backup',
+            icon: const Icon(Icons.restore, color: Colors.white),
+            onPressed: _importBackupFile,
+          ),
           IconButton(
             tooltip: 'Backup / Send to Self',
             icon: const Icon(Icons.backup, color: Colors.white),
