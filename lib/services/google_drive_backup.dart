@@ -24,6 +24,7 @@ const List<String> backupPreferenceKeys = <String>[
   'whatsapp_message_template',
   'khata_migration_v2_done',
   'legacy_auto_jama_data',
+  'account_initialized',
 ];
 
 String accountStoragePrefix(String email) =>
@@ -292,9 +293,37 @@ void lxhDailyBackupDispatcher() {
       final accessToken = auth.accessToken;
       if (accessToken == null || accessToken.isEmpty) return false;
       final prefix = accountStoragePrefix(email);
+      if (!(prefs.getBool(prefix + 'account_initialized') ?? false)) {
+        return true;
+      }
+
+      // If an earlier foreground restore failed, complete it before uploading
+      // anything so an empty device cannot overwrite a real cloud backup.
+      if (prefs.getBool(prefix + 'drive_restore_pending') ?? false) {
+        final remoteBackup = await GoogleDriveBackupService.restoreLatest(account);
+        final remoteData = remoteBackup?['data'];
+        if (remoteData is Map) {
+          for (final entry in remoteData.entries) {
+            final key = entry.key.toString();
+            if (!backupPreferenceKeys.contains(key)) continue;
+            final value = entry.value;
+            if (value is String) {
+              await prefs.setString(prefix + key, value);
+            } else if (value is bool) {
+              await prefs.setBool(prefix + key, value);
+            } else if (value is int) {
+              await prefs.setInt(prefix + key, value);
+            } else if (value is double) {
+              await prefs.setDouble(prefix + key, value);
+            }
+          }
+        }
+        await prefs.setBool(prefix + 'drive_restore_pending', false);
+      }
+
       final snapshot = <String, dynamic>{};
       for (final key in backupPreferenceKeys) {
-        final value = prefs.get('$prefix$key');
+        final value = prefs.get(prefix + key);
         if (value != null) snapshot[key] = value;
       }
       await GoogleDriveBackupService.backup(account, snapshot);
