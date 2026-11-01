@@ -294,11 +294,17 @@ void lxhDailyBackupDispatcher() {
       final accessToken = auth.accessToken;
       if (accessToken == null || accessToken.isEmpty) return false;
       final prefix = accountStoragePrefix(email);
+      final previouslyInitialized = prefs.getBool(prefix + 'account_initialized') ?? false;
 
       // If an earlier foreground restore failed, complete it before uploading
       // anything so an empty device cannot overwrite a real cloud backup.
       if (prefs.getBool(prefix + 'drive_restore_pending') ?? false) {
         final remoteBackup = await GoogleDriveBackupService.restoreLatest(account);
+
+        // On a first login with no cloud file yet, leave legacy data migration
+        // to the foreground app instead of uploading an empty snapshot.
+        if (remoteBackup == null && !previouslyInitialized) return true;
+
         final remoteData = remoteBackup?['data'];
         if (remoteData is Map) {
           for (final entry in remoteData.entries) {
@@ -313,6 +319,8 @@ void lxhDailyBackupDispatcher() {
               await prefs.setInt(prefix + key, value);
             } else if (value is double) {
               await prefs.setDouble(prefix + key, value);
+            } else if (value is List<String>) {
+              await prefs.setStringList(prefix + key, value);
             }
           }
         }
