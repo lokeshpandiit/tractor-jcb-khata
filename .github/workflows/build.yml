@@ -36,6 +36,10 @@ jobs:
           sed -i 's/gradle-[0-9.]*-all.zip/gradle-8.7-all.zip/' android/gradle/wrapper/gradle-wrapper.properties
           sed -i 's/gradle-[0-9.]*-bin.zip/gradle-8.7-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
 
+          # Meet Android plugin requirements for SDK and NDK versions.
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 35/' android/app/build.gradle
+          sed -i 's/ndkVersion flutter.ndkVersion/ndkVersion "26.1.10909125"/' android/app/build.gradle
+
           # Fix App Label in AndroidManifest.xml
           sed -i 's/android:label="[^"]*"/android:label="LxH ONE"/g' android/app/src/main/AndroidManifest.xml
 
