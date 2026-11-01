@@ -4,6 +4,7 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -156,6 +157,9 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
   DateTime? selectedFilterDate;
+  Timer? _driveBackupDebounce;
+  bool _driveBackupInProgress = false;
+  int _dataRevision = 0;
 
   List<Vehicle> vehicles = [];
   List<Person> workers = [];
@@ -231,20 +235,26 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Future<void> _maybeShowDailyBackupPrompt() async {
-    // No popup: upload silently only when local data changed and a Google
-    // account was connected earlier by the user.
+    // Historical method name retained; this never displays a popup.
+    await _uploadPendingDriveBackup();
+  }
+
+  void _scheduleDriveBackup() {
+    _driveBackupDebounce?.cancel();
+    _driveBackupDebounce = Timer(const Duration(seconds: 2), () {
+      _uploadPendingDriveBackup();
+    });
+  }
+
+  Future<void> _uploadPendingDriveBackup() async {
+    if (!mounted || _driveBackupInProgress) return;
     final prefs = await SharedPreferences.getInstance();
-    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    if (!mounted ||
-        prefs.getBool('drive_backup_pending') != true ||
-        prefs.getString('last_drive_backup_date') == today) {
-      return;
-    }
+    if (prefs.getBool('drive_backup_pending') != true) return;
     try {
       final account = await _googleSignIn.signInSilently();
       if (account != null) await _uploadDailyDriveBackup(account);
     } catch (_) {
-      // Keep the pending flag. Retry next time the app is opened; never prompt.
+      // Leave pending=true and retry on the next edit or app launch. No popup.
     }
   }
 
@@ -264,6 +274,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Future<void> _uploadDailyDriveBackup(GoogleSignInAccount account) async {
+    if (_driveBackupInProgress) return;
+    _driveBackupInProgress = true;
+    final uploadRevision = _dataRevision;
+    try {
     final api = await _driveApiFor(account);
     final folderId = await _getOrCreateDriveFolder(api);
     final file = await _createBackupFile();
@@ -278,8 +292,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('last_drive_backup_date', DateFormat('yyyy-MM-dd').format(DateTime.now()));
     await prefs.setString('last_drive_backup_account', account.email);
-    await prefs.setBool('drive_backup_pending', false);
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Backup Google Drive mein save ho gaya: ' + dateName)));
+    final stillCurrent = uploadRevision == _dataRevision;
+    await prefs.setBool('drive_backup_pending', !stillCurrent);
+    if (mounted && stillCurrent) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Backup Google Drive mein save ho gaya: ' + dateName)));
+    }
+    } finally {
+      _driveBackupInProgress = false;
+      final latestPrefs = await SharedPreferences.getInstance();
+      if (latestPrefs.getBool('drive_backup_pending') == true && mounted) {
+        _scheduleDriveBackup();
+      }
+    }
   }
 
   Future<void> _backupToGoogleDrive() async {
@@ -310,7 +334,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Future<File> _createBackupFile() async {
-    await _saveData();
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now().toUtc();
     final payload = <String, dynamic>{
@@ -454,6 +477,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     // Mark data dirty; Drive upload will happen silently on next app open
     // if the user has already connected a Google account.
     await prefs.setBool('drive_backup_pending', true);
+    _dataRevision++;
+    _scheduleDriveBackup();
   }
 
   void _openWorkEntryModal(String vehicleType) {
