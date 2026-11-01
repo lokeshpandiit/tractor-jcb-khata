@@ -1409,7 +1409,7 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
                     ),
                   ),
                   title: Text(entry.type, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('${entry.reason}\\n${entry.date}'),
+                  subtitle: Text('${entry.reason}\n${entry.date}'),
                   isThreeLine: true,
                   trailing: Text(
                     '$sign ${_money(entry.amount)}',
