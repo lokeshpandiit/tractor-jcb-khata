@@ -134,41 +134,61 @@ jobs:
           }
           KOTLIN
 
-      - name: Configure stable signing for Google OAuth
+      - name: Validate Google OAuth and release signing secrets
         env:
+          GOOGLE_SERVER_CLIENT_ID: ${{ secrets.GOOGLE_SERVER_CLIENT_ID }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/lxh-upload-key.jks
+          missing=0
+          for name in GOOGLE_SERVER_CLIENT_ID ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Required GitHub Actions secret is missing: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Add the missing secrets in Repository Settings > Secrets and variables > Actions."
+            exit 1
           fi
+
+      - name: Configure stable signing for Google OAuth
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEYSTORE_PASSWORD_CHECK: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/lxh-upload-key.jks
+          test -s android/app/lxh-upload-key.jks
+          keytool -list -keystore android/app/lxh-upload-key.jks -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null
 
           python3 - <<'PY'
           from pathlib import Path
 
           gradle = Path("android/app/build.gradle")
           text = gradle.read_text(encoding="utf-8")
+          if "applicationId = \"com.example.tractor_jcb_khata\"" not in text and 'applicationId "com.example.tractor_jcb_khata"' not in text:
+              raise SystemExit("Unexpected Android applicationId. Expected com.example.tractor_jcb_khata.")
+
           if "signingConfigs.lxhRelease" not in text:
               text += """
               
-              // Optional persistent release key supplied through repository secrets.
-              // Without it, Flutter's default debug signing remains active.
               android {
-                  if (file("lxh-upload-key.jks").exists()) {
-                      signingConfigs {
-                          lxhRelease {
-                              storeFile file("lxh-upload-key.jks")
-                              storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
-                              keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: ""
-                              keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: ""
-                          }
+                  signingConfigs {
+                      lxhRelease {
+                          storeFile file("lxh-upload-key.jks")
+                          storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                          keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                          keyPassword System.getenv("ANDROID_KEY_PASSWORD")
                       }
-                      buildTypes {
-                          release {
-                              signingConfig signingConfigs.lxhRelease
-                          }
+                  }
+                  buildTypes {
+                      release {
+                          signingConfig signingConfigs.lxhRelease
                       }
                   }
               }
