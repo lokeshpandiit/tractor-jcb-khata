@@ -686,7 +686,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                         ? 'Spreadsheet not created yet.'
                         : (sheetsPending
                             ? 'Sync pending. The saved spreadsheet will be retried.'
-                            : 'Last sync: §{lastSheetsSync == null ? 'not recorded' : DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.parse(lastSheetsSync).toLocal())}'),
+                            : 'Last sync: ${lastSheetsSyncDate == null ? 'not recorded' : DateFormat('dd MMM yyyy, hh:mm a').format(lastSheetsSyncDate!.toLocal())}'),
                   ),
                 ),
                 if (sheetsId != null)
