@@ -5,8 +5,13 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter/services.dart';
+import 'services/google_drive_backup.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await initializeLxhDailyBackup();
   runApp(const FleetKhataApp());
 }
 
@@ -153,6 +158,39 @@ class CashEntry {
   );
 }
 
+
+class AdvanceRequest {
+  final String id;
+  final String name;
+  final double amount;
+  final String date;
+  final String note;
+
+  AdvanceRequest({
+    required this.id,
+    required this.name,
+    required this.amount,
+    required this.date,
+    required this.note,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'amount': amount,
+    'date': date,
+    'note': note,
+  };
+
+  factory AdvanceRequest.fromJson(Map<String, dynamic> json) => AdvanceRequest(
+    id: json['id']?.toString() ?? '',
+    name: json['name']?.toString() ?? '',
+    amount: (json['amount'] ?? 0).toDouble(),
+    date: json['date']?.toString() ?? '',
+    note: json['note']?.toString() ?? '',
+  );
+}
+
 String _normalizePhone(String value) {
   var digits = value.replaceAll(RegExp(r'[^0-9]'), '');
   if (digits.startsWith('00')) digits = digits.substring(2);
@@ -177,17 +215,188 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   List<Person> clients = [];
   List<WorkLog> logs = [];
   List<CashEntry> cashBook = [];
+  List<AdvanceRequest> advanceRequests = [];
+
+  GoogleSignInAccount? _activeGoogleAccount;
+  bool _authReady = false;
+  bool _authBusy = false;
+  String? _authError;
+  bool _driveRestoreFailed = false;
+
+  String _accountKey(String key) {
+    final email = _activeGoogleAccount?.email;
+    return email == null ? key : accountStoragePrefix(email) + key;
+  }
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _initializeAccount();
   }
+
+  Future<void> _initializeAccount() async {
+    try {
+      final account = await GoogleDriveBackupService.signInSilently();
+      if (account != null) {
+        await _activateAccount(account);
+      }
+    } catch (e) {
+      _authError = e.toString();
+    } finally {
+      if (mounted) setState(() => _authReady = true);
+    }
+  }
+
+  Future<void> _signInGoogle() async {
+    if (!GoogleDriveBackupService.isConfigured) {
+      setState(() => _authError =
+          'Google OAuth is not configured yet. Add GOOGLE_SERVER_CLIENT_ID in GitHub Actions and register this Android app in Google Cloud.');
+      return;
+    }
+    setState(() {
+      _authBusy = true;
+      _authError = null;
+    });
+    try {
+      final account = await GoogleDriveBackupService.signIn();
+      if (account == null) {
+        _authError = 'Google sign-in was cancelled.';
+      } else {
+        await _activateAccount(account);
+      }
+    } catch (e) {
+      _authError = e.toString();
+    } finally {
+      if (mounted) setState(() {
+        _authBusy = false;
+        _authReady = true;
+      });
+    }
+  }
+
+  Future<void> _activateAccount(GoogleSignInAccount account) async {
+    final prefs = await SharedPreferences.getInstance();
+    final prefix = accountStoragePrefix(account.email);
+    final scopedKeys = backupPreferenceKeys.map((key) => prefix + key);
+    final hasScopedData = scopedKeys.any(prefs.containsKey);
+    Map<String, dynamic>? cloudBackup;
+    _driveRestoreFailed = false;
+
+    try {
+      cloudBackup = await GoogleDriveBackupService.restoreLatest(account);
+    } catch (e) {
+      _driveRestoreFailed = true;
+      _authError = 'Google account signed in, but Drive restore failed: ' + e.toString();
+    }
+
+    final cloudData = cloudBackup?['data'];
+    if (cloudData is Map) {
+      for (final entry in cloudData.entries) {
+        final key = entry.key.toString();
+        if (!backupPreferenceKeys.contains(key)) continue;
+        final value = entry.value;
+        final destinationKey = prefix + key;
+        if (value is String) {
+          await prefs.setString(destinationKey, value);
+        } else if (value is bool) {
+          await prefs.setBool(destinationKey, value);
+        } else if (value is int) {
+          await prefs.setInt(destinationKey, value);
+        } else if (value is double) {
+          await prefs.setDouble(destinationKey, value);
+        } else if (value is List<String>) {
+          await prefs.setStringList(destinationKey, value);
+        }
+      }
+    } else if (cloudBackup == null &&
+        !hasScopedData &&
+        !(prefs.getBool('lxh_has_linked_google_account') ?? false)) {
+      // First-ever Google account on this installation: preserve legacy local
+      // data by moving it into that account's isolated namespace.
+      for (final key in backupPreferenceKeys) {
+        final legacyString = prefs.getString(key);
+        final legacyBool = prefs.getBool(key);
+        if (legacyString != null) {
+          await prefs.setString(prefix + key, legacyString);
+        } else if (legacyBool != null) {
+          await prefs.setBool(prefix + key, legacyBool);
+        }
+      }
+    }
+
+    await prefs.setString('active_google_email', account.email);
+    await prefs.setBool('lxh_has_linked_google_account', true);
+    _activeGoogleAccount = account;
+    await _loadData();
+
+    // Do not upload local data after a failed restore. That could overwrite a
+    // valid remote backup with an incomplete local copy.
+    if (!_driveRestoreFailed) {
+      await _saveData();
+    }
+  }
+
+  Future<void> _changeGoogleAccount() async {
+    await _saveData();
+    await GoogleDriveBackupService.signOut();
+    if (!mounted) return;
+    setState(() {
+      _activeGoogleAccount = null;
+      vehicles = [];
+      workers = [];
+      clients = [];
+      logs = [];
+      cashBook = [];
+      advanceRequests = [];
+      _authError = null;
+      _authReady = true;
+    });
+  }
+
+  Widget _buildLoginScreen() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.cloud_sync, size: 54, color: Color(0xFFE65100)),
+                const SizedBox(height: 12),
+                const Text('LxH ONE Account', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                const Text(
+                  'Sign in with Google to keep your Tractor, JCB, Worker, Party and Khata data in your own Google Drive backup.',
+                  textAlign: TextAlign.center,
+                ),
+                if (_authError != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_authError!, style: const TextStyle(color: Colors.red), textAlign: TextAlign.center),
+                ],
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _authBusy ? null : _signInGoogle,
+                    icon: const Icon(Icons.login),
+                    label: Text(_authBusy ? 'Please wait...' : 'Continue with Google'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
 
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     
-    final vehiclesString = prefs.getString('vehicles_data');
+    final vehiclesString = prefs.getString(_accountKey('vehicles_data'));
     if (vehiclesString != null) {
       final List decoded = jsonDecode(vehiclesString);
       vehicles = decoded.map((e) => Vehicle.fromJson(e)).toList();
@@ -199,7 +408,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ];
     }
 
-    final workersString = prefs.getString('workers_data');
+    final workersString = prefs.getString(_accountKey('workers_data'));
     if (workersString != null) {
       final List decoded = jsonDecode(workersString);
       workers = decoded.map((e) => Person.fromJson(e)).toList();
@@ -210,7 +419,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ];
     }
 
-    final clientsString = prefs.getString('clients_data');
+    final clientsString = prefs.getString(_accountKey('clients_data'));
     if (clientsString != null) {
       final List decoded = jsonDecode(clientsString);
       clients = decoded.map((e) => Person.fromJson(e)).toList();
@@ -221,7 +430,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ];
     }
 
-    final logsString = prefs.getString('logs_data');
+    final logsString = prefs.getString(_accountKey('logs_data'));
     if (logsString != null) {
       final List decoded = jsonDecode(logsString);
       final loadedLogs = decoded.map((e) => WorkLog.fromJson(e)).toList();
@@ -251,36 +460,217 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       }).toList();
     }
 
-    final cashString = prefs.getString('cash_data');
-    final migrationDone = prefs.getBool('khata_migration_v2_done') ?? false;
+    final cashString = prefs.getString(_accountKey('cash_data'));
+    final migrationDone = prefs.getBool(_accountKey('khata_migration_v2_done')) ?? false;
     if (cashString != null) {
       final List decoded = jsonDecode(cashString);
       final loadedEntries = decoded.map((e) => CashEntry.fromJson(e)).toList();
       if (!migrationDone) {
-        // Earlier versions auto-created Jama for bills. Archive rather than count as received cash.
-        final legacyAutoJama = loadedEntries.where((e) => e.type == 'Jama').toList();
-        await prefs.setString('legacy_auto_jama_data',
+        // Only remove bill rows created by the old buggy auto-Jama logic.
+        // Real receipts are retained even when old data is being migrated.
+        final legacyAutoJama = loadedEntries.where((entry) =>
+          entry.type == 'Jama' &&
+          entry.partyId.isEmpty &&
+          logs.any((log) =>
+            entry.title == log.clientName + ' (' + log.vehicleName + ')' &&
+            entry.amount == log.totalAmount &&
+            entry.date == log.date
+          )
+        ).toList();
+        await prefs.setString(_accountKey('legacy_auto_jama_data'),
             jsonEncode(legacyAutoJama.map((e) => e.toJson()).toList()));
-        cashBook = loadedEntries.where((e) => e.type != 'Jama').toList();
-        await prefs.setString('cash_data',
+        cashBook = loadedEntries.where((entry) => !legacyAutoJama.contains(entry)).toList();
+        await prefs.setString(_accountKey('cash_data'),
             jsonEncode(cashBook.map((e) => e.toJson()).toList()));
       } else {
         cashBook = loadedEntries;
       }
     }
-    await prefs.setBool('khata_migration_v2_done', true);
-    await prefs.setString('logs_data', jsonEncode(logs.map((e) => e.toJson()).toList()));
+    final advanceString = prefs.getString(_accountKey('advance_requests_data'));
+    if (advanceString != null) {
+      final List decoded = jsonDecode(advanceString);
+      advanceRequests = decoded.map((e) => AdvanceRequest.fromJson(e)).toList();
+    }
+    await prefs.setBool(_accountKey('khata_migration_v2_done'), true);
+    await prefs.setString(_accountKey('logs_data'), jsonEncode(logs.map((e) => e.toJson()).toList()));
     if (mounted) setState(() {});
   }
 
   Future<void> _saveData() async {
+    if (_activeGoogleAccount == null) return;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('vehicles_data', jsonEncode(vehicles.map((e) => e.toJson()).toList()));
-    await prefs.setString('workers_data', jsonEncode(workers.map((e) => e.toJson()).toList()));
-    await prefs.setString('clients_data', jsonEncode(clients.map((e) => e.toJson()).toList()));
-    await prefs.setString('logs_data', jsonEncode(logs.map((e) => e.toJson()).toList()));
-    await prefs.setString('cash_data', jsonEncode(cashBook.map((e) => e.toJson()).toList()));
-    await prefs.setBool('khata_migration_v2_done', true);
+    await prefs.setString(_accountKey('vehicles_data'), jsonEncode(vehicles.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('workers_data'), jsonEncode(workers.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('clients_data'), jsonEncode(clients.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('logs_data'), jsonEncode(logs.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('cash_data'), jsonEncode(cashBook.map((e) => e.toJson()).toList()));
+    await prefs.setString(_accountKey('advance_requests_data'), jsonEncode(advanceRequests.map((e) => e.toJson()).toList()));
+    await prefs.setBool(_accountKey('khata_migration_v2_done'), true);
+    await _backupToDrive();
+  }
+
+  Future<void> _backupToDrive() async {
+    final account = _activeGoogleAccount;
+    if (account == null || _driveRestoreFailed) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final prefix = accountStoragePrefix(account.email);
+      final snapshot = <String, dynamic>{};
+      for (final key in backupPreferenceKeys) {
+        final stringValue = prefs.getString(prefix + key);
+        final boolValue = prefs.getBool(prefix + key);
+        if (stringValue != null) {
+          snapshot[key] = stringValue;
+        } else if (boolValue != null) {
+          snapshot[key] = boolValue;
+        }
+      }
+      await GoogleDriveBackupService.backup(account, snapshot);
+      await prefs.setString('lxh_last_backup_' + account.email, DateTime.now().toIso8601String());
+      if (mounted) setState(() => _driveRestoreFailed = false);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Local data saved. Google Drive backup failed: ' + e.toString())),
+        );
+      }
+    }
+  }
+
+
+  String _defaultSmsTemplate() =>
+      'Namaste {partyName}, aapke yahan {date} ko {machineName} (No: {machineNumber}) ne {hours} ghante kaam kiya @ ₹{rate}/hr. Total Bill: ₹{totalBill}. - LxH ONE';
+
+  String _defaultWhatsAppTemplate() =>
+      '*Tractor/JCB Work Slip*\n\nParty: *{partyName}*\nDate: {date}\nMachine: {machineName}\nMachine No: {machineNumber}\nDriver: {driverName}\nTotal Time: *{hours} Hours*\nRate: ₹{rate}/hr\n-------------------------\n💰 *Total Bill: ₹{totalBill}*';
+
+  String _renderMessageTemplate(String template, WorkLog log) {
+    final values = <String, String>{
+      '{partyName}': log.clientName,
+      '{date}': log.date,
+      '{machineName}': log.vehicleName,
+      '{machineNumber}': log.vehicleNumber,
+      '{driverName}': log.driverName,
+      '{hours}': log.hours.toString(),
+      '{rate}': log.rate.toStringAsFixed(0),
+      '{totalBill}': log.totalAmount.toStringAsFixed(0),
+    };
+    var message = template;
+    for (final entry in values.entries) {
+      message = message.replaceAll(entry.key, entry.value);
+    }
+    return message;
+  }
+
+  Future<void> _openMessageSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final smsController = TextEditingController(
+      text: prefs.getString(_accountKey('sms_message_template')) ?? _defaultSmsTemplate(),
+    );
+    final whatsappController = TextEditingController(
+      text: prefs.getString(_accountKey('whatsapp_message_template')) ?? _defaultWhatsAppTemplate(),
+    );
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Message Settings'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Align(alignment: Alignment.centerLeft, child: Text('SMS Message', style: TextStyle(fontWeight: FontWeight.bold))),
+                TextField(controller: smsController, maxLines: 5, decoration: const InputDecoration(border: OutlineInputBorder())),
+                const SizedBox(height: 12),
+                const Align(alignment: Alignment.centerLeft, child: Text('WhatsApp Message', style: TextStyle(fontWeight: FontWeight.bold))),
+                TextField(controller: whatsappController, maxLines: 8, decoration: const InputDecoration(border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                const Text(
+                  'Available fields: {partyName}, {date}, {machineName}, {machineNumber}, {driverName}, {hours}, {rate}, {totalBill}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              await prefs.setString(_accountKey('sms_message_template'), smsController.text);
+              await prefs.setString(_accountKey('whatsapp_message_template'), whatsappController.text);
+              await _saveData();
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+            },
+            child: const Text('Save Messages'),
+          ),
+        ],
+      ),
+    );
+    smsController.dispose();
+    whatsappController.dispose();
+  }
+
+  void _addAdvanceRequestDialog() {
+    final nameController = TextEditingController();
+    final amountController = TextEditingController();
+    final noteController = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Advance Maanga'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Kisne advance maanga?')),
+              TextField(
+                controller: amountController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Advance Amount (₹)'),
+              ),
+              TextField(controller: noteController, decoration: const InputDecoration(labelText: 'Reason / Details (optional)')),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              final name = nameController.text.trim();
+              final amount = double.tryParse(amountController.text.trim()) ?? 0;
+              if (name.isEmpty || amount <= 0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Name aur valid advance amount bharein.')),
+                );
+                return;
+              }
+              setState(() {
+                advanceRequests.insert(0, AdvanceRequest(
+                  id: DateTime.now().microsecondsSinceEpoch.toString(),
+                  name: name,
+                  amount: amount,
+                  date: DateFormat('dd MMM yyyy').format(DateTime.now()),
+                  note: noteController.text.trim(),
+                ));
+              });
+              await _saveData();
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+              nameController.dispose();
+              amountController.dispose();
+              noteController.dispose();
+            },
+            child: const Text('Save Request'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _deleteAdvanceRequest(AdvanceRequest request) {
+    setState(() => advanceRequests.removeWhere((item) => item.id == request.id));
+    _saveData();
   }
 
   void _openWorkEntryModal(String vehicleType) {
@@ -439,64 +829,61 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  // Fixed Direct WhatsApp Launcher
-  void _sendWhatsApp(WorkLog log) async {
+  Future<void> _sendWhatsApp(WorkLog log) async {
     var cleanPhone = _normalizePhone(log.clientPhone);
-    if (cleanPhone.length == 10) cleanPhone = '91$cleanPhone';
-    final msg = '*Tractor/JCB Work Slip*\n\n'
-        'Party: *${log.clientName}*\n'
-        'Date: ${log.date}\n'
-        'Machine: ${log.vehicleName}\n'
-        'Driver: ${log.driverName}\n'
-        'Total Time: *${log.hours} Hours*\n'
-        'Rate: ₹${log.rate}/hr\n'
-        '-------------------------\n'
-        '💰 *Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}*';
-
-    final uri = Uri.parse('https://wa.me/$cleanPhone?text=${Uri.encodeComponent(msg)}');
-    
+    if (cleanPhone.length == 10) cleanPhone = '91' + cleanPhone;
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Party ka mobile number sahi nahi hai.')),
+      );
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final template = prefs.getString(_accountKey('whatsapp_message_template')) ?? _defaultWhatsAppTemplate();
+    final message = _renderMessageTemplate(template, log);
+    final uri = Uri.parse('https://wa.me/' + cleanPhone + '?text=' + Uri.encodeComponent(message));
     try {
-      final canOpen = await canLaunchUrl(uri);
-      if (!mounted) return;
-      if (canOpen) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('WhatsApp could not be opened!')),
-        );
-      }
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+        SnackBar(content: Text('WhatsApp could not be opened: ' + e.toString())),
       );
     }
   }
 
-  void _sendSMS(WorkLog log) async {
-    final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
-    final message = 'Namaste ${log.clientName}, aapke yahan ${log.date} ko ${log.vehicleName} ne ${log.hours} ghante kaam kiya @ ₹${log.rate}/hr. Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}. - LxH ONE';
-    
-    final uri = Uri(
-      scheme: 'sms',
-      path: cleanPhone,
-      queryParameters: {'body': message},
-    );
-
+  Future<void> _sendSMS(WorkLog log) async {
+    final cleanPhone = _normalizePhone(log.clientPhone);
+    if (cleanPhone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Party ka mobile number sahi nahi hai.')),
+      );
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final template = prefs.getString(_accountKey('sms_message_template')) ?? _defaultSmsTemplate();
+    final message = _renderMessageTemplate(template, log);
     try {
-      final canOpen = await canLaunchUrl(uri);
-      if (!mounted) return;
-      if (canOpen) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        final fallbackUri = Uri.parse('sms:$cleanPhone?body=${Uri.encodeComponent(message)}');
-        await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
-      }
-    } catch (e) {
+      await const MethodChannel('com.example.tractor_jcb_khata/sms').invokeMethod<bool>(
+        'openSms',
+        <String, String>{'phone': cleanPhone, 'message': message},
+      );
+    } on PlatformException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open SMS: $e')),
+        SnackBar(content: Text('SMS app could not be opened: ' + (e.message ?? e.code))),
       );
+    } on MissingPluginException {
+      final uri = Uri(
+        scheme: 'smsto',
+        path: cleanPhone,
+        queryParameters: <String, String>{'body': message},
+      );
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('SMS app could not be opened.')),
+        );
+      }
     }
   }
 
@@ -515,9 +902,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         title: const Text('LxH ONE', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFE65100),
         elevation: 2,
+        actions: [
+          if (_activeGoogleAccount != null) ...[
+            IconButton(
+              tooltip: 'Message Settings',
+              onPressed: _openMessageSettings,
+              icon: const Icon(Icons.settings, color: Colors.white),
+            ),
+            IconButton(
+              tooltip: 'Change Google Account',
+              onPressed: _changeGoogleAccount,
+              icon: const Icon(Icons.account_circle, color: Colors.white),
+            ),
+          ],
+        ],
       ),
-      body: screens[_currentIndex],
-      bottomNavigationBar: NavigationBar(
+      body: !_authReady
+          ? const Center(child: CircularProgressIndicator())
+          : (_activeGoogleAccount == null ? _buildLoginScreen() : screens[_currentIndex]),
+      bottomNavigationBar: _activeGoogleAccount == null ? null : NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (idx) => setState(() => _currentIndex = idx),
         destinations: const [
@@ -818,26 +1221,46 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             icon: const Icon(Icons.remove), label: const Text('Paisa Diya'),
           )),
         ]),
-        const SizedBox(height: 14),
-        const Text('Recent Transactions', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _addAdvanceRequestDialog,
+            icon: const Icon(Icons.request_quote),
+            label: const Text('Advance Maanga (Request Record)'),
+          ),
+        ),
         const SizedBox(height: 8),
-        if (cashBook.isEmpty)
-          const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('Abhi koi len-den nahi hai.')))
+        const Text('Advance Requests', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        if (advanceRequests.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Text('Abhi koi advance request record nahi hai.'),
+          )
         else
-          ...cashBook.map((entry) => Card(child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: entry.type == 'Jama' ? Colors.green.shade50 : Colors.red.shade50,
-              child: Icon(entry.type == 'Jama' ? Icons.arrow_downward : Icons.arrow_upward,
-                  color: entry.type == 'Jama' ? Colors.green : Colors.red),
+          ...advanceRequests.map((request) => Card(
+            child: ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFFFFF3E0),
+                child: Icon(Icons.request_quote, color: Color(0xFFE65100)),
+              ),
+              title: Text(request.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(request.note.isEmpty ? request.date : request.date + ' • ' + request.note),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('₹' + request.amount.toStringAsFixed(0),
+                    style: const TextStyle(color: Color(0xFFE65100), fontWeight: FontWeight.bold)),
+                  IconButton(
+                    tooltip: 'Delete request',
+                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    onPressed: () => _deleteAdvanceRequest(request),
+                  ),
+                ],
+              ),
             ),
-            title: Text(entry.title),
-            subtitle: Text(entry.partyName.isNotEmpty ? '${entry.partyName} • ${entry.date}' : entry.date),
-            trailing: Text(
-              '${entry.type == 'Jama' ? '+' : '-'} ₹${entry.amount.toStringAsFixed(0)}',
-              style: TextStyle(fontWeight: FontWeight.bold,
-                  color: entry.type == 'Jama' ? Colors.green : Colors.red),
-            ),
-          ))),
+          )),
       ],
     );
   }
