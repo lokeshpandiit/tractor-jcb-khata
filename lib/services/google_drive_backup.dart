@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import 'backup_encryption.dart';
+import 'google_sheets_sync.dart';
 const String _driveScope = 'https://www.googleapis.com/auth/drive.file';
 const String _driveFolderName = 'LxH ONE Backup';
 const String _backupTaskName = 'lxhDailyDriveBackup';
@@ -29,6 +30,8 @@ const List<String> backupPreferenceKeys = <String>[
   'customer_payment_whatsapp_template',
   'driver_statement_sms_template',
   'driver_statement_whatsapp_template',
+  GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
+  'google_sheets_sync_pending',
   'khata_migration_v2_done',
   'legacy_auto_jama_data',
   'account_initialized',
@@ -376,6 +379,32 @@ void lxhDailyBackupDispatcher() {
         final value = prefs.get(prefix + key);
         if (value != null) snapshot[key] = value;
       }
+      // Sync the readable accounting workbook too. If Sheets is unavailable,
+      // keep a pending flag but do not block the encrypted Drive backup.
+      try {
+        final sheetResult = await GoogleSheetsSyncService.sync(
+          accessToken: accessToken,
+          accountEmail: email,
+          snapshot: snapshot,
+          spreadsheetId: prefs.getString(
+            prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
+          ),
+        );
+        await prefs.setString(
+          prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
+          sheetResult.spreadsheetId,
+        );
+        await prefs.setBool(prefix + 'google_sheets_sync_pending', false);
+        await prefs.setString(
+          'lxh_last_sheets_sync_' + email,
+          DateTime.now().toIso8601String(),
+        );
+        snapshot[GoogleSheetsSyncService.spreadsheetIdPreferenceKey] =
+            sheetResult.spreadsheetId;
+      } catch (_) {
+        await prefs.setBool(prefix + 'google_sheets_sync_pending', true);
+      }
+
       // If Android terminates this worker while uploading, the next run knows
       // the local snapshot may not have reached Drive and preserves it separately.
       await prefs.setBool(prefix + 'unsynced_local_changes', true);

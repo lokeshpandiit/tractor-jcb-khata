@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'services/backup_encryption.dart';
 import 'services/google_drive_backup.dart';
+import 'services/google_sheets_sync.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -609,6 +610,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     var lastBackup = prefs.getString('lxh_last_backup_' + account.email);
     var lastBackupDate = DateTime.tryParse(lastBackup ?? '');
     var pending = prefs.getBool(prefix + 'unsynced_local_changes') ?? false;
+    var sheetsId = prefs.getString(
+      prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
+    );
+    var sheetsPending = prefs.getBool(prefix + 'google_sheets_sync_pending') ?? true;
+    var lastSheetsSync = prefs.getString('lxh_last_sheets_sync_' + account.email);
+    var lastSheetsSyncDate = DateTime.tryParse(lastSheetsSync ?? '');
     var passwordSaved = (await _backupPasswordStorage.read(
       key: backupPasswordStorageKey(account.email),
     ))?.isNotEmpty ?? false;
@@ -667,11 +674,65 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       ? 'No successful backup recorded on this phone yet.'
                       : DateFormat('dd MMM yyyy, hh:mm a').format(lastBackupDate!.toLocal())),
                 ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    Icons.table_chart,
+                    color: sheetsPending || sheetsId == null ? Colors.orange : Colors.green,
+                  ),
+                  title: const Text('Google Sheets — Customer & Driver Ledgers'),
+                  subtitle: Text(
+                    sheetsId == null
+                        ? 'Spreadsheet not created yet.'
+                        : (sheetsPending
+                            ? 'Sync pending. The saved spreadsheet will be retried.'
+                            : 'Last sync: §{lastSheetsSync == null ? 'not recorded' : DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.parse(lastSheetsSync).toLocal())}'),
+                  ),
+                ),
+                if (sheetsId != null)
+                  OutlinedButton.icon(
+                    onPressed: () => launchUrl(
+                      Uri.parse('https://docs.google.com/spreadsheets/d/$sheetsId/edit'),
+                      mode: LaunchMode.externalApplication,
+                    ),
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('Open Google Sheets Ledger'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: busy
+                      ? null
+                      : () async {
+                          setSheetState(() {
+                            busy = true;
+                            statusMessage = 'Syncing customer and driver ledgers...';
+                          });
+                          await _syncToGoogleSheets();
+                          if (!sheetContext.mounted) return;
+                          final refreshed = await SharedPreferences.getInstance();
+                          final newId = refreshed.getString(
+                            prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
+                          );
+                          final newPending = refreshed.getBool(prefix + 'google_sheets_sync_pending') ?? true;
+                          final newLast = refreshed.getString('lxh_last_sheets_sync_' + account.email);
+                          setSheetState(() {
+                            busy = false;
+                            sheetsId = newId;
+                            sheetsPending = newPending;
+                            lastSheetsSync = newLast;
+                            lastSheetsSyncDate = DateTime.tryParse(newLast ?? '');
+                            statusMessage = !newPending && newId != null
+                                ? 'Google Sheets ledger synced successfully.'
+                                : 'Sheets sync is still pending. Check Internet/API access and retry.';
+                          });
+                        },
+                  icon: const Icon(Icons.sync),
+                  label: const Text('Sync Google Sheets Now'),
+                ),
                 if (pending)
                   const Padding(
                     padding: EdgeInsets.only(bottom: 8),
                     child: Text(
-                      'Some local changes are waiting to sync. The next successful backup will be saved as a recovery version.',
+                      'Some local changes are waiting to sync to Drive. The next successful backup will be saved as a recovery version.',
                       style: TextStyle(color: Colors.deepOrange, fontSize: 12),
                     ),
                   ),
@@ -957,7 +1018,57 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       jsonEncode(driverLedger.map((e) => e.toJson()).toList()),
     );
     await prefs.setBool(_accountKey('khata_migration_v2_done'), true);
-    if (_activeGoogleAccount != null) await _backupToDrive();
+    if (_activeGoogleAccount != null) {
+      await _syncToGoogleSheets();
+      await _backupToDrive();
+    }
+  }
+
+  Future<void> _syncToGoogleSheets() async {
+    final account = _activeGoogleAccount;
+    if (account == null || _driveRestoreFailed) return;
+    final prefs = await SharedPreferences.getInstance();
+    final prefix = accountStoragePrefix(account.email);
+    try {
+      final auth = await account.authentication;
+      final accessToken = auth.accessToken;
+      if (accessToken == null || accessToken.isEmpty) {
+        throw StateError('Google authorization is missing for Sheets sync.');
+      }
+
+      final snapshot = <String, dynamic>{};
+      for (final key in backupPreferenceKeys) {
+        final stringValue = prefs.getString(prefix + key);
+        final boolValue = prefs.getBool(prefix + key);
+        if (stringValue != null) {
+          snapshot[key] = stringValue;
+        } else if (boolValue != null) {
+          snapshot[key] = boolValue;
+        }
+      }
+
+      final existingId = prefs.getString(
+        prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
+      );
+      final result = await GoogleSheetsSyncService.sync(
+        accessToken: accessToken,
+        accountEmail: account.email,
+        snapshot: snapshot,
+        spreadsheetId: existingId,
+      );
+      await prefs.setString(
+        prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
+        result.spreadsheetId,
+      );
+      await prefs.setBool(prefix + 'google_sheets_sync_pending', false);
+      await prefs.setString(
+        'lxh_last_sheets_sync_' + account.email,
+        DateTime.now().toIso8601String(),
+      );
+    } catch (_) {
+      await prefs.setBool(prefix + 'google_sheets_sync_pending', true);
+      // Local save and encrypted Drive backup must continue even if Sheets is offline.
+    }
   }
 
   Future<void> _backupToDrive() async {
