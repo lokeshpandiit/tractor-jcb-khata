@@ -339,7 +339,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     if (_driveRestoreFailed) {
       // Keep the app behind the sign-in gate until the cloud restore succeeds.
       // Never let an empty/partial local database overwrite an existing backup.
-      await prefs.remove('active_google_email');
+      await prefs.setString('active_google_email', account.email);
       _activeGoogleAccount = null;
       return;
     }
