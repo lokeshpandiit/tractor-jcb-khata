@@ -55,15 +55,34 @@ class Person {
   String name;
   String phone;
   final String role;
+  double salaryAmount;
+  String salaryType;
 
-  Person({required this.id, required this.name, required this.phone, required this.role});
+  Person({
+    required this.id,
+    required this.name,
+    required this.phone,
+    required this.role,
+    this.salaryAmount = 0,
+    this.salaryType = 'Monthly',
+  });
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'phone': phone, 'role': role};
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'phone': phone,
+    'role': role,
+    'salaryAmount': salaryAmount,
+    'salaryType': salaryType,
+  };
+
   factory Person.fromJson(Map<String, dynamic> json) => Person(
-    id: json['id'],
-    name: json['name'],
-    phone: json['phone'],
-    role: json['role'],
+    id: json['id'] ?? '',
+    name: json['name'] ?? '',
+    phone: json['phone'] ?? '',
+    role: json['role'] ?? '',
+    salaryAmount: (json['salaryAmount'] ?? 0).toDouble(),
+    salaryType: json['salaryType'] ?? 'Monthly',
   );
 }
 
@@ -129,6 +148,43 @@ class CashEntry {
   );
 }
 
+class DriverLedgerEntry {
+  final String id;
+  final String driverId;
+  final String type;
+  final double amount;
+  final String reason;
+  final String date;
+
+  DriverLedgerEntry({
+    required this.id,
+    required this.driverId,
+    required this.type,
+    required this.amount,
+    required this.reason,
+    required this.date,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'driverId': driverId,
+    'type': type,
+    'amount': amount,
+    'reason': reason,
+    'date': date,
+  };
+
+  factory DriverLedgerEntry.fromJson(Map<String, dynamic> json) =>
+      DriverLedgerEntry(
+        id: json['id'] ?? '',
+        driverId: json['driverId'] ?? '',
+        type: json['type'] ?? 'Advance',
+        amount: (json['amount'] ?? 0).toDouble(),
+        reason: json['reason'] ?? '',
+        date: json['date'] ?? '',
+      );
+}
+
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
@@ -145,6 +201,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   List<Person> clients = [];
   List<WorkLog> logs = [];
   List<CashEntry> cashBook = [];
+  List<DriverLedgerEntry> driverLedger = [];
 
   @override
   void initState() {
@@ -201,7 +258,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       cashBook = decoded.map((e) => CashEntry.fromJson(e)).toList();
     }
 
-    setState(() {});
+    final driverLedgerString = prefs.getString('driver_ledger_data');
+    if (driverLedgerString != null) {
+      final List decoded = jsonDecode(driverLedgerString);
+      driverLedger = decoded.map((e) => DriverLedgerEntry.fromJson(e)).toList();
+    }
+
+    if (mounted) setState(() {});
   }
 
   Future<void> _saveData() async {
@@ -211,6 +274,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     await prefs.setString('clients_data', jsonEncode(clients.map((e) => e.toJson()).toList()));
     await prefs.setString('logs_data', jsonEncode(logs.map((e) => e.toJson()).toList()));
     await prefs.setString('cash_data', jsonEncode(cashBook.map((e) => e.toJson()).toList()));
+    await prefs.setString(
+      'driver_ledger_data',
+      jsonEncode(driverLedger.map((e) => e.toJson()).toList()),
+    );
   }
 
   void _openWorkEntryModal(String vehicleType) {
@@ -669,6 +736,21 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
+  void _openDriverKhata(Person driver) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DriverKhataScreen(
+          driver: driver,
+          entries: driverLedger,
+          onChanged: () {
+            _saveData();
+            if (mounted) setState(() {});
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildPeopleTab(String role) {
     final list = role == 'Worker' ? workers : clients;
 
@@ -695,6 +777,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (role == 'Worker')
+                  IconButton(
+                    icon: const Icon(Icons.account_balance_wallet, color: Color(0xFFE65100)),
+                    tooltip: 'Driver Khata',
+                    onPressed: () => _openDriverKhata(p),
+                  ),
                 IconButton(
                   icon: const Icon(Icons.phone, color: Colors.green),
                   onPressed: () => launchUrl(Uri.parse('tel:${p.phone}'), mode: LaunchMode.externalApplication),
@@ -958,6 +1046,402 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
               child: const Text('Save Record', style: TextStyle(fontSize: 16)),
             ),
             const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class DriverKhataScreen extends StatefulWidget {
+  final Person driver;
+  final List<DriverLedgerEntry> entries;
+  final VoidCallback onChanged;
+
+  const DriverKhataScreen({
+    super.key,
+    required this.driver,
+    required this.entries,
+    required this.onChanged,
+  });
+
+  @override
+  State<DriverKhataScreen> createState() => _DriverKhataScreenState();
+}
+
+class _DriverKhataScreenState extends State<DriverKhataScreen> {
+  DateTime? selectedDate;
+
+  List<DriverLedgerEntry> get _driverEntries => widget.entries.where(
+    (entry) => entry.driverId == widget.driver.id,
+  ).toList();
+
+  double _totalFor(String type) => _driverEntries
+      .where((entry) => entry.type == type)
+      .fold(0.0, (sum, entry) => sum + entry.amount);
+
+  String _money(double amount) => '₹\${amount.toStringAsFixed(0)}';
+
+  Future<void> _setSalary() async {
+    final amountController = TextEditingController(
+      text: widget.driver.salaryAmount > 0
+          ? widget.driver.salaryAmount.toStringAsFixed(0)
+          : '',
+    );
+    String salaryType = widget.driver.salaryType;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Set Driver Salary'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                value: salaryType,
+                decoration: const InputDecoration(labelText: 'Salary Type'),
+                items: const [
+                  DropdownMenuItem(value: 'Daily', child: Text('Daily')),
+                  DropdownMenuItem(value: 'Monthly', child: Text('Monthly')),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setDialogState(() => salaryType = value);
+                  }
+                },
+              ),
+              TextField(
+                controller: amountController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  labelText: salaryType == 'Daily'
+                      ? 'Daily Salary (₹)'
+                      : 'Monthly Salary (₹)',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final amount = double.tryParse(amountController.text.trim());
+                if (amount == null || amount <= 0) return;
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final amount = double.tryParse(amountController.text.trim());
+    amountController.dispose();
+    if (saved == true && amount != null && amount > 0) {
+      setState(() {
+        widget.driver.salaryAmount = amount;
+        widget.driver.salaryType = salaryType;
+      });
+      widget.onChanged();
+    }
+  }
+
+  Future<void> _addLedgerEntry() async {
+    final amountController = TextEditingController();
+    final reasonController = TextEditingController();
+    String type = 'Advance';
+    DateTime entryDate = DateTime.now();
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Add Driver Khata Entry'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: type,
+                  decoration: const InputDecoration(labelText: 'Entry Type'),
+                  items: const [
+                    DropdownMenuItem(value: 'Salary Due', child: Text('Salary Due')),
+                    DropdownMenuItem(value: 'Salary Paid', child: Text('Salary Paid')),
+                    DropdownMenuItem(value: 'Advance', child: Text('Advance')),
+                    DropdownMenuItem(value: 'Other Payment', child: Text('Other Payment')),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() {
+                        type = value;
+                        if (type == 'Salary Due' && widget.driver.salaryAmount > 0) {
+                          amountController.text =
+                              widget.driver.salaryAmount.toStringAsFixed(0);
+                        }
+                      });
+                    }
+                  },
+                ),
+                TextField(
+                  controller: amountController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'Amount (₹)'),
+                ),
+                TextField(
+                  controller: reasonController,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason / Details',
+                    hintText: 'e.g. Monthly salary, festival advance, medical need',
+                  ),
+                  maxLines: 2,
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(DateFormat('dd MMM yyyy').format(entryDate)),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.calendar_month),
+                      label: const Text('Date'),
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: dialogContext,
+                          initialDate: entryDate,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime.now(),
+                        );
+                        if (picked != null) {
+                          setDialogState(() => entryDate = picked);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final amount = double.tryParse(amountController.text.trim());
+                if (amount == null || amount <= 0) return;
+                if (reasonController.text.trim().isEmpty) return;
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Save Entry'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final amount = double.tryParse(amountController.text.trim());
+    final reason = reasonController.text.trim();
+    amountController.dispose();
+    reasonController.dispose();
+
+    if (saved == true && amount != null && amount > 0 && reason.isNotEmpty) {
+      setState(() {
+        widget.entries.insert(
+          0,
+          DriverLedgerEntry(
+            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            driverId: widget.driver.id,
+            type: type,
+            amount: amount,
+            reason: reason,
+            date: DateFormat('dd MMM yyyy').format(entryDate),
+          ),
+        );
+      });
+      widget.onChanged();
+    }
+  }
+
+  Future<void> _pickHistoryDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedDate ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) setState(() => selectedDate = picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final allEntries = _driverEntries;
+    final now = DateTime.now();
+    final visibleEntries = allEntries.where((entry) {
+      DateTime date;
+      try {
+        date = DateFormat('dd MMM yyyy').parseStrict(entry.date);
+      } catch (_) {
+        return false;
+      }
+      if (selectedDate != null) {
+        return date.year == selectedDate!.year &&
+            date.month == selectedDate!.month &&
+            date.day == selectedDate!.day;
+      }
+      final difference = DateTime(now.year, now.month, now.day)
+          .difference(DateTime(date.year, date.month, date.day))
+          .inDays;
+      return difference >= 0 && difference <= 2;
+    }).toList();
+
+    final salaryDue = _totalFor('Salary Due');
+    final salaryPaid = _totalFor('Salary Paid');
+    final advances = _totalFor('Advance');
+    final otherPayments = _totalFor('Other Payment');
+    final balance = salaryDue - salaryPaid - advances - otherPayments;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('\${widget.driver.name} Khata'),
+        backgroundColor: const Color(0xFFE65100),
+        foregroundColor: Colors.white,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            color: Colors.orange.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Salary: \${_money(widget.driver.salaryAmount)} / \${widget.driver.salaryType}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      onPressed: _setSalary,
+                      icon: const Icon(Icons.edit),
+                      label: const Text('Set Salary'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            childAspectRatio: 2.0,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            children: [
+              _summaryCard('Salary Due', salaryDue, Colors.orange),
+              _summaryCard('Salary Paid', salaryPaid, Colors.green),
+              _summaryCard('Advance', advances, Colors.blue),
+              _summaryCard('Balance Due', balance, balance >= 0 ? Colors.red : Colors.deepPurple),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            onPressed: _addLedgerEntry,
+            icon: const Icon(Icons.add),
+            label: const Text('Add Khata Entry'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE65100),
+              foregroundColor: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  selectedDate == null
+                      ? 'Recent Transactions (Last 3 Days)'
+                      : 'Transactions: \${DateFormat('dd MMM yyyy').format(selectedDate!)}',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ),
+              if (selectedDate != null)
+                TextButton(
+                  onPressed: () => setState(() => selectedDate = null),
+                  child: const Text('Recent'),
+                ),
+              IconButton(
+                onPressed: _pickHistoryDate,
+                icon: const Icon(Icons.calendar_month, color: Color(0xFFE65100)),
+                tooltip: 'Older transactions',
+              ),
+            ],
+          ),
+          if (visibleEntries.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: Text('No transactions found.')),
+            )
+          else
+            ...visibleEntries.map((entry) {
+              final isDue = entry.type == 'Salary Due';
+              final sign = isDue ? '+' : '-';
+              final color = isDue ? Colors.green : Colors.red;
+              return Card(
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: color.withOpacity(0.12),
+                    child: Icon(
+                      isDue ? Icons.arrow_downward : Icons.arrow_upward,
+                      color: color,
+                    ),
+                  ),
+                  title: Text(entry.type, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text('\${entry.reason}\\n\${entry.date}'),
+                  isThreeLine: true,
+                  trailing: Text(
+                    '\$sign \${_money(entry.amount)}',
+                    style: TextStyle(color: color, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              );
+            }),
+          const SizedBox(height: 12),
+          if (otherPayments > 0)
+            Text(
+              'Other payments recorded: \${_money(otherPayments)}',
+              style: TextStyle(color: Colors.grey.shade700),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryCard(String title, double amount, Color color) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(title, style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            Text(
+              _money(amount),
+              style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 18),
+            ),
           ],
         ),
       ),
