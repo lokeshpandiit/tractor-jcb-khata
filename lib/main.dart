@@ -983,6 +983,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           snapshot[key] = boolValue;
         }
       }
+      // Mark the upload as pending before network I/O. If Android kills the
+      // process mid-upload, the next attempt writes a separate recovery version.
+      await prefs.setBool(prefix + 'unsynced_local_changes', true);
       await GoogleDriveBackupService.backup(
         account,
         snapshot,
