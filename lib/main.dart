@@ -491,48 +491,40 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // Safe Contact Picker with Permission check to prevent minimizing crash
-  void _addMultiplePersonsDialog(String role) async {
+  // Android system picker grants access only to the contact selected by the user.
+  // No broad READ_CONTACTS permission is required for this flow.
+  Future<void> _addMultiplePersonsDialog(String role) async {
     try {
-      var status = await Permission.contacts.status;
-      if (!status.isGranted) {
-        status = await Permission.contacts.request();
-      }
-
-      if (status.isGranted) {
-        final Contact? contact = await FlutterContacts.openExternalPick();
-        if (contact != null) {
-          String name = contact.displayName;
-          String phone = '';
-          if (contact.phones.isNotEmpty) {
-            phone = contact.phones.first.number.replaceAll(RegExp(r'\D'), '');
-          }
-
-          if (name.isNotEmpty && phone.isNotEmpty) {
-            setState(() {
-              final newP = Person(
-                id: DateTime.now().toString() + phone,
-                name: name,
-                phone: phone,
-                role: role,
-              );
-              if (role == 'Worker') {
-                workers.add(newP);
-              } else {
-                clients.add(newP);
-              }
-            });
-            _saveData();
-          }
-        }
-      } else {
+      final Contact? contact = await FlutterContacts.openExternalPick();
+      if (!mounted || contact == null) return;
+      final name = contact.displayName.trim();
+      final phone = contact.phones.isNotEmpty
+          ? contact.phones.first.number.replaceAll(RegExp(r'\D'), '')
+          : '';
+      if (name.isEmpty || phone.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Contacts permission is required to pick contacts!')),
+          const SnackBar(content: Text('Selected contact has no name or phone number.')),
         );
+        return;
       }
+      setState(() {
+        final newPerson = Person(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          name: name,
+          phone: phone,
+          role: role,
+        );
+        if (role == 'Worker') {
+          workers.add(newPerson);
+        } else {
+          clients.add(newPerson);
+        }
+      });
+      await _saveData();
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error picking contact: $e')),
+        SnackBar(content: Text('Could not open contact picker: $e')),
       );
     }
   }
@@ -745,8 +737,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     return Card(child:ListTile(
       leading:CircleAvatar(child:Text(p.name.isEmpty?'?':p.name[0].toUpperCase())),
       title:Text(p.name,style:const TextStyle(fontWeight:FontWeight.bold)),
-      subtitle:Text(driver ? p.phone : '\${p.active ? "Active" : "Completed"} • \${p.phone}'),
-      trailing:Row(mainAxisSize:MainAxisSize.min,children:[Text('₹\${due.abs().toStringAsFixed(0)}',style:TextStyle(fontWeight:FontWeight.bold,color:due>0?Colors.orange:Colors.green)),const Icon(Icons.chevron_right)]),
+      subtitle:Text(driver ? p.phone : '${p.active ? "Active" : "Completed"} • ${p.phone}'),
+      trailing:Row(mainAxisSize:MainAxisSize.min,children:[Text('₹${due.abs().toStringAsFixed(0)}',style:TextStyle(fontWeight:FontWeight.bold,color:due>0?Colors.orange:Colors.green)),const Icon(Icons.chevron_right)]),
       onTap:()=>_showPersonLedger(p,driver),
     ));
   }
@@ -761,21 +753,21 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   void _showPersonLedger(Person p,bool driver) {
     showDialog(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,refresh)=>AlertDialog(
-      title:Text('\${p.name} ka Hisab'),
+      title:Text('${p.name} ka Hisab'),
       content:SizedBox(width:420,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,mainAxisSize:MainAxisSize.min,children:[
         if(driver)...[
           _ledgerLine('Total Earning (Manual)',_earned(p)),_ledgerLine('Advance Given',_advance(p)),_ledgerLine('Other Payment Given',_driverPaid(p)),_ledgerLine('Remaining Payable',_driverDue(p)),
           const Divider(),const Text('Earning / Payment History',style:TextStyle(fontWeight:FontWeight.bold)),
-          ...ledgerEntries.where((e)=>e.personName==p.name&&e.kind.startsWith('driver')).map((e)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹\${e.amount.toStringAsFixed(0)}'))),
+          ...ledgerEntries.where((e)=>e.personName==p.name&&e.kind.startsWith('driver')).map((e)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹${e.amount.toStringAsFixed(0)}'))),
           OutlinedButton(onPressed:()async{await _addPersonEntry('driverEarning',p);refresh((){});},child:const Text('Add Earning')),
           OutlinedButton(onPressed:()async{await _addPersonEntry('driverAdvance',p);refresh((){});},child:const Text('Add Advance')),
           OutlinedButton(onPressed:()async{await _addPersonEntry('driverPayment',p);refresh((){});},child:const Text('Add Payment Given')),
         ]else...[
           _ledgerLine('Total Bill',_bill(p)),_ledgerLine('Payment Received',_received(p)),_ledgerLine('Remaining Due',_clientDue(p)),
           const Divider(),const Text('Work History',style:TextStyle(fontWeight:FontWeight.bold)),
-          ...logs.where((l)=>l.clientName==p.name).map((l)=>ListTile(contentPadding:EdgeInsets.zero,title:Text('\${l.date} • \${l.vehicleName}'),subtitle:Text('\${l.hours} hrs × ₹\${l.rate.toStringAsFixed(0)}'),trailing:Text('₹\${l.totalAmount.toStringAsFixed(0)}'))),
+          ...logs.where((l)=>l.clientName==p.name).map((l)=>ListTile(contentPadding:EdgeInsets.zero,title:Text('${l.date} • ${l.vehicleName}'),subtitle:Text('${l.hours} hrs × ₹${l.rate.toStringAsFixed(0)}'),trailing:Text('₹${l.totalAmount.toStringAsFixed(0)}'))),
           const Divider(),const Text('Payment History',style:TextStyle(fontWeight:FontWeight.bold)),
-          ...ledgerEntries.where((e)=>e.kind=='clientPayment'&&e.personName==p.name).map((e)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹\${e.amount.toStringAsFixed(0)}'))),
+          ...ledgerEntries.where((e)=>e.kind=='clientPayment'&&e.personName==p.name).map((e)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹${e.amount.toStringAsFixed(0)}'))),
           OutlinedButton(onPressed:()async{await _addPersonEntry('clientPayment',p);refresh((){});},child:const Text('Add Payment Received')),
           OutlinedButton(onPressed:()async{p.active=!p.active;await _saveData();setState((){});refresh((){});},child:Text(p.active?'Mark Completed':'Mark Active')),
         ],
@@ -785,7 +777,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     )));
   }
 
-  Widget _ledgerLine(String label,double amount)=>Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[Flexible(child:Text(label)),Text('₹\${amount.toStringAsFixed(0)}',style:const TextStyle(fontWeight:FontWeight.bold))]));
+  Widget _ledgerLine(String label,double amount)=>Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[Flexible(child:Text(label)),Text('₹${amount.toStringAsFixed(0)}',style:const TextStyle(fontWeight:FontWeight.bold))]));
 
   Future<void> _addPersonEntry(String kind,Person p) async {
     final amount=TextEditingController(),note=TextEditingController();
@@ -802,9 +794,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   void _sendLedgerWhatsApp(Person p,bool driver) async {
     final total=driver?_earned(p):_bill(p),paid=driver?_advance(p)+_driverPaid(p):_received(p),due=total-paid;
-    final message=driver?'Namaste \${p.name},\\nTotal earning: ₹\${total.toStringAsFixed(0)}\\nAdvance: ₹\${_advance(p).toStringAsFixed(0)}\\nPayment given: ₹\${_driverPaid(p).toStringAsFixed(0)}\\nRemaining payable: ₹\${due.toStringAsFixed(0)}':'Namaste \${p.name},\\nTotal bill: ₹\${total.toStringAsFixed(0)}\\nPayment received: ₹\${paid.toStringAsFixed(0)}\\nRemaining due: ₹\${due.toStringAsFixed(0)}';
-    final phone=p.phone.replaceAll(RegExp(r'\\D'),'');
-    final uri=Uri.parse('https://wa.me/\${phone.startsWith('91')?phone:'91$phone'}?text=\${Uri.encodeComponent(message)}');
+    final message=driver?'Namaste ${p.name},\nTotal earning: ₹${total.toStringAsFixed(0)}\nAdvance: ₹${_advance(p).toStringAsFixed(0)}\nPayment given: ₹${_driverPaid(p).toStringAsFixed(0)}\nRemaining payable: ₹${due.toStringAsFixed(0)}':'Namaste ${p.name},\nTotal bill: ₹${total.toStringAsFixed(0)}\nPayment received: ₹${paid.toStringAsFixed(0)}\nRemaining due: ₹${due.toStringAsFixed(0)}';
+    final phone=p.phone.replaceAll(RegExp(r'\D'),'');
+    final normalizedPhone=phone.startsWith('91')?phone:'91$phone';
+    final uri=Uri.https('wa.me','/$normalizedPhone',{'text':message});
     await launchUrl(uri,mode:LaunchMode.externalApplication);
   }
 
@@ -830,10 +823,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ]),
       const SizedBox(height:16),
       const Text('Expenses',style:TextStyle(fontWeight:FontWeight.bold)),
-      ...expenses.map((e)=>ListTile(leading:const Icon(Icons.receipt_long,color:Colors.red),title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹\${e.amount.toStringAsFixed(0)}'))),
+      ...expenses.map((e)=>ListTile(leading:const Icon(Icons.receipt_long,color:Colors.red),title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹${e.amount.toStringAsFixed(0)}'))),
       const Divider(),
       const Text('Loan Ledger',style:TextStyle(fontWeight:FontWeight.bold)),
-      ...loans.map((e)=>ListTile(leading:const Icon(Icons.account_balance,color:Colors.blue),title:Text(e.title),subtitle:Text('\${e.date} • Principal ₹\${e.amount.toStringAsFixed(0)} • Interest ₹\${e.interest.toStringAsFixed(0)}'),trailing:Text('₹\${(e.amount+e.interest).toStringAsFixed(0)}'))),
+      ...loans.map((e)=>ListTile(leading:const Icon(Icons.account_balance,color:Colors.blue),title:Text(e.title),subtitle:Text('${e.date} • Principal ₹${e.amount.toStringAsFixed(0)} • Interest ₹${e.interest.toStringAsFixed(0)}'),trailing:Text('₹${(e.amount+e.interest).toStringAsFixed(0)}'))),
       if(expenses.isEmpty&&loans.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Center(child:Text('Abhi koi expense ya loan record nahi hai.'))),
     ]);
   }
