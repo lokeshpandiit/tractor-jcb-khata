@@ -1055,6 +1055,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         accountEmail: account.email,
         snapshot: snapshot,
         spreadsheetId: existingId,
+        onSpreadsheetIdCreated: (id) async {
+          await prefs.setString(
+            prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
+            id,
+          );
+        },
       );
       await prefs.setString(
         prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
