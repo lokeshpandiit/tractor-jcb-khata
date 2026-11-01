@@ -12,6 +12,8 @@ void main() {
   testWidgets('LxH ONE opens the five main sections', (tester) async {
     await tester.pumpWidget(const FleetKhataApp());
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue Without Google for Now'));
+    await tester.pumpAndSettle();
 
     expect(find.text('LxH ONE'), findsOneWidget);
     expect(find.text('Tractor'), findsOneWidget);
