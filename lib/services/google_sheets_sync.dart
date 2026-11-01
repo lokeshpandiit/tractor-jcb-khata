@@ -45,6 +45,7 @@ class GoogleSheetsSyncService {
     required String accountEmail,
     required Map<String, dynamic> snapshot,
     String? spreadsheetId,
+    Future<void> Function(String spreadsheetId)? onSpreadsheetIdCreated,
     http.Client? httpClient,
   }) async {
     if (accessToken.trim().isEmpty) {
@@ -56,6 +57,9 @@ class GoogleSheetsSyncService {
       var id = spreadsheetId;
       if (id == null || id.trim().isEmpty) {
         id = await _createSpreadsheet(client, accessToken, accountEmail);
+        if (onSpreadsheetIdCreated != null) {
+          await onSpreadsheetIdCreated(id);
+        }
       }
 
       var metadata = await _getMetadata(client, accessToken, id);
