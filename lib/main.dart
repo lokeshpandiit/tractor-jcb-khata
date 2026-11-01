@@ -602,8 +602,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   @override
   Widget build(BuildContext context) {
     final screens = [
-      _buildFleetTab('Tractor'),
-      _buildFleetTab('JCB'),
+      _buildFleetTab('Machine Name'),
       _buildPeopleTab('Worker'),
       _buildPeopleTab('Client'),
       _buildCashTab(),
@@ -632,8 +631,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         selectedIndex: _currentIndex,
         onDestinationSelected: (idx) => setState(() => _currentIndex = idx),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.agriculture), label: 'Tractor'),
-          NavigationDestination(icon: Icon(Icons.construction), label: 'JCB'),
+          NavigationDestination(icon: Icon(Icons.agriculture), label: 'Machine Name'),
           NavigationDestination(icon: Icon(Icons.engineering), label: 'Drivers'),
           NavigationDestination(icon: Icon(Icons.groups), label: 'Parties'),
           NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: 'Khata/Cash'),
@@ -643,164 +641,60 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Widget _buildFleetTab(String type) {
-    final filteredVehicles = vehicles.where((v) => v.type == type).toList();
-    final now = DateTime.now();
-    final filteredLogs = logs.where((l) {
-      if (l.vehicleType != type) return false;
-      try {
-        DateTime logDate = DateFormat('dd MMM yyyy').parse(l.date);
-        if (selectedFilterDate != null) {
-          return logDate.year == selectedFilterDate!.year &&
-                 logDate.month == selectedFilterDate!.month &&
-                 logDate.day == selectedFilterDate!.day;
-        } else {
-          final difference = now.difference(logDate).inDays;
-          return difference >= 0 && difference <= 3;
-        }
-      } catch (e) {
-        return true;
-      }
-    }).toList();
-
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('$type Fleet List', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
-              onPressed: () => _openWorkEntryModal(type),
-              icon: const Icon(Icons.add),
-              label: Text('New $type Entry'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        ...filteredVehicles.map((v) => Card(
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: type == 'Tractor' ? Colors.green.shade100 : Colors.amber.shade100,
-              child: Icon(type == 'Tractor' ? Icons.agriculture : Icons.construction, color: Colors.brown),
-            ),
-            title: Text(v.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text('No: ${v.number} | Rate: ₹${v.defaultRate.toStringAsFixed(0)}/hr'),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
-                  onPressed: () => _editRateDialog(v),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                  onPressed: () => _deleteVehicle(v),
-                ),
-              ],
-            ),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Text('Machine Name', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
+            onPressed: _addMachineDialog, icon: const Icon(Icons.add), label: const Text('Add Machine'),
           ),
-        )),
-        const Divider(height: 32),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              selectedFilterDate == null 
-                  ? 'Recent $type Logs (Last 3 Days)' 
-                  : 'Logs: ${DateFormat('dd MMM yyyy').format(selectedFilterDate!)}',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            Row(
-              children: [
-                if (selectedFilterDate != null)
-                  TextButton(
-                    onPressed: () => setState(() => selectedFilterDate = null),
-                    child: const Text('Reset', style: TextStyle(color: Colors.red)),
-                  ),
-                IconButton(
-                  icon: const Icon(Icons.calendar_month, color: Color(0xFFE65100)),
-                  tooltip: 'Past Records',
-                  onPressed: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: selectedFilterDate ?? DateTime.now(),
-                      firstDate: DateTime(2023),
-                      lastDate: DateTime.now(),
-                    );
-                    if (picked != null) {
-                      setState(() => selectedFilterDate = picked);
-                    }
-                  },
-                ),
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        filteredLogs.isEmpty
-            ? const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('No entries found.')))
-            : ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: filteredLogs.length,
-                itemBuilder: (context, i) {
-                  final log = filteredLogs[i];
-                  final originalIndex = logs.indexWhere((l) => l.id == log.id);
-                  return Card(
-                    margin: const EdgeInsets.symmetric(vertical: 6),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text('${log.clientName} (${log.date})', style: const TextStyle(fontWeight: FontWeight.bold)),
-                              Row(
-                                children: [
-                                  Text('₹${log.totalAmount.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16)),
-                                  const SizedBox(width: 8),
-                                  GestureDetector(
-                                    onTap: () => _deleteLog(originalIndex, log),
-                                    child: const Icon(Icons.delete, color: Colors.red, size: 20),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text('${log.vehicleName} | Driver: ${log.driverName}'),
-                          Text('Duration: ${log.hours} hrs @ ₹${log.rate}/hr', style: TextStyle(color: Colors.grey.shade700)),
-                          const SizedBox(height: 8),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              OutlinedButton.icon(
-                                icon: const Icon(Icons.message, size: 16),
-                                label: const Text('SMS'),
-                                onPressed: () => _sendSMS(log),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-                                icon: const Icon(Icons.send, size: 16),
-                                label: const Text('WhatsApp'),
-                                onPressed: () => _sendWhatsApp(log),
-                              ),
-                            ],
-                          )
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
+        ]),
+        const SizedBox(height: 12),
+        ...vehicles.map((v) => Card(child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: v.type == 'Tractor' ? Colors.green.shade100 : Colors.amber.shade100,
+            child: Icon(v.type == 'Tractor' ? Icons.agriculture : Icons.construction, color: Colors.brown),
+          ),
+          title: Text(v.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+          subtitle: Text('${v.type} • No: ${v.number} • Rate: ₹${v.defaultRate.toStringAsFixed(0)}/hr'),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            IconButton(icon: const Icon(Icons.edit, color: Colors.blue, size: 20), onPressed: () => _editRateDialog(v)),
+            IconButton(icon: const Icon(Icons.delete, color: Colors.red, size: 20), onPressed: () => _deleteVehicle(v)),
+          ]),
+        ))),
+        if (vehicles.isEmpty) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No machines added yet.'))),
       ],
     );
   }
 
+  void _addMachineDialog() {
+    final name = TextEditingController();
+    final number = TextEditingController();
+    final rate = TextEditingController();
+    String machineType = 'Tractor';
+    showDialog(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setDialogState) => AlertDialog(
+      title: const Text('Add Machine'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        DropdownButtonFormField<String>(value: machineType, decoration: const InputDecoration(labelText: 'Machine Type'),
+          items: const [DropdownMenuItem(value: 'Tractor', child: Text('Tractor')), DropdownMenuItem(value: 'JCB', child: Text('JCB'))],
+          onChanged: (v) => setDialogState(() => machineType = v ?? 'Tractor')),
+        TextField(controller: name, decoration: const InputDecoration(labelText: 'Machine Name')),
+        TextField(controller: number, decoration: const InputDecoration(labelText: 'Machine Number')),
+        TextField(controller: rate, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Rate / Hour (₹)')),
+      ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        ElevatedButton(onPressed: () {
+          final parsedRate = double.tryParse(rate.text) ?? 0;
+          if (name.text.trim().isEmpty || number.text.trim().isEmpty || parsedRate <= 0) return;
+          setState(() => vehicles.add(Vehicle(id: DateTime.now().microsecondsSinceEpoch.toString(), name: name.text.trim(), number: number.text.trim(), type: machineType, defaultRate: parsedRate)));
+          _saveData(); Navigator.pop(ctx);
+        }, child: const Text('Save Machine')),
+      ],
+    )));
+  }
   void _editRateDialog(Vehicle v) {
     final nameCtrl = TextEditingController(text: v.name);
     final numCtrl = TextEditingController(text: v.number);
