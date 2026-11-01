@@ -347,6 +347,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final prefix = accountStoragePrefix(account.email);
     final scopedKeys = backupPreferenceKeys.map((key) => prefix + key);
     final hasScopedData = scopedKeys.any(prefs.containsKey);
+    final hasUnsyncedLocalChanges =
+        prefs.getBool(prefix + 'unsynced_local_changes') ?? false;
     Map<String, dynamic>? cloudBackup;
     _driveRestoreFailed = false;
 
@@ -358,7 +360,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
 
     final cloudData = cloudBackup?['data'];
-    if (cloudData is Map) {
+    if (cloudData is Map && !hasUnsyncedLocalChanges) {
       for (final entry in cloudData.entries) {
         final key = entry.key.toString();
         if (!backupPreferenceKeys.contains(key)) continue;
@@ -649,9 +651,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   Future<void> _backupToDrive() async {
     final account = _activeGoogleAccount;
     if (account == null || _driveRestoreFailed) return;
+    final prefs = await SharedPreferences.getInstance();
+    final prefix = accountStoragePrefix(account.email);
+    final hasUnsyncedLocalChanges =
+        prefs.getBool(prefix + 'unsynced_local_changes') ?? false;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final prefix = accountStoragePrefix(account.email);
       final snapshot = <String, dynamic>{};
       for (final key in backupPreferenceKeys) {
         final stringValue = prefs.getString(prefix + key);
@@ -662,10 +666,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           snapshot[key] = boolValue;
         }
       }
-      await GoogleDriveBackupService.backup(account, snapshot);
+      await GoogleDriveBackupService.backup(
+        account,
+        snapshot,
+        createNewVersion: hasUnsyncedLocalChanges,
+      );
+      await prefs.setBool(prefix + 'unsynced_local_changes', false);
       await prefs.setString('lxh_last_backup_' + account.email, DateTime.now().toIso8601String());
       if (mounted) setState(() => _driveRestoreFailed = false);
     } catch (e) {
+      await prefs.setBool(prefix + 'unsynced_local_changes', true);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Local data saved. Google Drive backup failed: ' + e.toString())),
