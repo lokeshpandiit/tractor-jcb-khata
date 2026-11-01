@@ -600,6 +600,130 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     await _saveData();
   }
 
+  Future<void> _openBackupManager() async {
+    final account = _activeGoogleAccount;
+    if (account == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final prefix = accountStoragePrefix(account.email);
+    var lastBackup = prefs.getString('lxh_last_backup_' + account.email);
+    var pending = prefs.getBool(prefix + 'unsynced_local_changes') ?? false;
+    var passwordSaved = (await _backupPasswordStorage.read(
+      key: backupPasswordStorageKey(account.email),
+    ))?.isNotEmpty ?? false;
+    var busy = false;
+    String? statusMessage;
+
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.cloud_done, color: Color(0xFFE65100), size: 28),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text('Backup & Restore', style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(sheetContext),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.account_circle_outlined),
+                  title: const Text('Google Account'),
+                  subtitle: Text(account.email),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.lock_outline, color: Colors.green),
+                  title: const Text('Backup Encryption'),
+                  subtitle: Text(passwordSaved
+                      ? 'AES-256-GCM enabled. Backup Password saved securely on this phone.'
+                      : 'Backup Password is not saved on this phone.'),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    pending ? Icons.sync_problem : Icons.cloud_done,
+                    color: pending ? Colors.orange : Colors.green,
+                  ),
+                  title: const Text('Last Successful Backup'),
+                  subtitle: Text(lastBackup == null
+                      ? 'No successful backup recorded on this phone yet.'
+                      : DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.parse(lastBackup).toLocal())),
+                ),
+                if (pending)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'Some local changes are waiting to sync. The next successful backup will be saved as a recovery version.',
+                      style: TextStyle(color: Colors.deepOrange, fontSize: 12),
+                    ),
+                  ),
+                if (statusMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(statusMessage!, style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ElevatedButton.icon(
+                  onPressed: busy || !passwordSaved || _driveRestoreFailed
+                      ? null
+                      : () async {
+                          setSheetState(() {
+                            busy = true;
+                            statusMessage = 'Creating encrypted Google Drive backup...';
+                          });
+                          await _backupToDrive();
+                          if (!sheetContext.mounted) return;
+                          final refreshed = await SharedPreferences.getInstance();
+                          final newLast = refreshed.getString('lxh_last_backup_' + account.email);
+                          final newPending = refreshed.getBool(prefix + 'unsynced_local_changes') ?? false;
+                          setSheetState(() {
+                            busy = false;
+                            lastBackup = newLast;
+                            pending = newPending;
+                            statusMessage = !newPending && newLast != null
+                                ? 'Encrypted backup completed successfully.'
+                                : 'Backup did not complete. Local data is safe; check Internet and retry.';
+                          });
+                        },
+                  icon: busy
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.cloud_upload),
+                  label: Text(busy ? 'Backing up...' : 'Backup Now'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE65100),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Daily automatic backup runs when Android schedules the background task and Internet is available. Keep your Backup Password safe for restoring on another phone.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _changeGoogleAccount() async {
     await _saveData();
     final prefs = await SharedPreferences.getInstance();
@@ -1567,6 +1691,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               tooltip: 'Message Settings',
               onPressed: _openMessageSettings,
               icon: const Icon(Icons.settings, color: Colors.white),
+            ),
+          if (_activeGoogleAccount != null)
+            IconButton(
+              tooltip: 'Backup Status',
+              onPressed: _openBackupManager,
+              icon: const Icon(Icons.cloud_sync, color: Colors.white),
             ),
           if (_activeGoogleAccount != null)
             IconButton(
