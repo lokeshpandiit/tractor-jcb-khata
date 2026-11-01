@@ -986,6 +986,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ));
     }
     await _saveData();
+    if (mounted) setState(() {});
   }
 
 
