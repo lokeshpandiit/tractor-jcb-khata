@@ -134,7 +134,17 @@ jobs:
           }
           KOTLIN
 
-      - name: Validate Google OAuth and release signing secrets
+      - name: Get Dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart Code
+        run: flutter analyze --no-pub --no-fatal-infos
+
+      - name: Run Flutter Tests
+        run: flutter test --no-pub
+
+      - name: Check release configuration
+        id: release-config
         env:
           GOOGLE_SERVER_CLIENT_ID: ${{ secrets.GOOGLE_SERVER_CLIENT_ID }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -142,23 +152,20 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          missing=0
+          ready=true
           for name in GOOGLE_SERVER_CLIENT_ID ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
             if [ -z "${!name}" ]; then
-              echo "::error::Required GitHub Actions secret is missing: $name"
-              missing=1
+              echo "::warning::Missing GitHub Actions secret: $name"
+              ready=false
             fi
           done
-          if [ "$missing" -ne 0 ]; then
-            echo "Add the missing secrets in Repository Settings > Secrets and variables > Actions."
-            exit 1
-          fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
 
       - name: Configure stable signing for Google OAuth
+        if: steps.release-config.outputs.ready == 'true'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEYSTORE_PASSWORD_CHECK: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
@@ -171,7 +178,7 @@ jobs:
 
           gradle = Path("android/app/build.gradle")
           text = gradle.read_text(encoding="utf-8")
-          if "applicationId = \"com.example.tractor_jcb_khata\"" not in text and 'applicationId "com.example.tractor_jcb_khata"' not in text:
+          if 'applicationId "com.example.tractor_jcb_khata"' not in text and 'applicationId = "com.example.tractor_jcb_khata"' not in text:
               raise SystemExit("Unexpected Android applicationId. Expected com.example.tractor_jcb_khata.")
 
           if "signingConfigs.lxhRelease" not in text:
@@ -196,20 +203,17 @@ jobs:
               gradle.write_text(text, encoding="utf-8")
           PY
 
-      - name: Get Dependencies
-        run: flutter pub get
-
-      - name: Analyze Dart Code
-        run: flutter analyze --no-pub --no-fatal-infos
-
-      - name: Run Flutter Tests
-        run: flutter test --no-pub
-
       - name: Build Release APKs
+        if: steps.release-config.outputs.ready == 'true'
         run: flutter build apk --release --split-per-abi --dart-define=GOOGLE_SERVER_CLIENT_ID=${{ secrets.GOOGLE_SERVER_CLIENT_ID }}
 
       - name: Upload APK Artifact
+        if: steps.release-config.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: LxH-ONE-APK
+          name: LxH-ONE-V3-APK
           path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+
+      - name: Explain missing release configuration
+        if: steps.release-config.outputs.ready != 'true'
+        run: echo "Dart analysis and widget tests passed. Release APK was not built because Google OAuth / permanent signing secrets are missing."
