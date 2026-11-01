@@ -328,45 +328,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       'ledgerEntries': ledgerEntries.map((e) => e.toJson()).toList(),
     };
     final directory = await getApplicationDocumentsDirectory();
-    final fileName = 'LxH_ONE_Backup_${DateFormat('yyyy-MM-dd_HH-mm-ss').format(DateTime.now())}.json';
+    final fileName = 'LxH_ONE_Backup_' + DateFormat('yyyy-MM-dd').format(DateTime.now()) + '.json';
     final file = File('${directory.path}/$fileName');
     await file.writeAsString(const JsonEncoder.withIndent('  ').convert(payload), flush: true);
     await prefs.setString('latest_backup_file', file.path);
     return file;
   }
 
-  Future<void> _createAndShareBackup() async {
-    try {
-      final file = await _createBackupFile();
-      final result = await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'application/json', name: file.uri.pathSegments.last)],
-        subject: 'LxH ONE Data Backup',
-        text: 'LxH ONE ka complete data backup. Is file ko apni WhatsApp chat (Message Yourself) mein bhej kar safe rakhein.',
-      );
-      final prefs = await SharedPreferences.getInstance();
-      if (result.status == ShareResultStatus.success) {
-        await prefs.setString('last_backup_prompt_date', DateFormat('yyyy-MM-dd').format(DateTime.now()));
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Backup file ready: ${file.uri.pathSegments.last}. WhatsApp mein apni chat select karke Send dabayein.')),
-        );
-      }
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Backup failed: $e')));
-    }
-  }
-
   Future<void> _importBackupFile() async {
     try {
-      final picked = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['json'],
-        withData: true,
-      );
-      if (picked == null || picked.files.isEmpty) return;
-      final bytes = picked.files.single.bytes;
-      if (bytes == null) throw Exception('Selected file could not be read.');
+      final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['json'], withData: true);
+      if (picked == null || picked.files.isEmpty || picked.files.single.bytes == null) return;
+      await _restoreBackupBytes(picked.files.single.bytes!);
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not restore backup: $e'))); }
+  }
+
+  Future<void> _restoreBackupBytes(List<int> bytes) async {
+    try {
       final decoded = jsonDecode(utf8.decode(bytes));
       if (decoded is! Map<String, dynamic> ||
           decoded['app'] != 'LxH ONE' ||
@@ -669,16 +647,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     return Scaffold(
       appBar: AppBar(
         actions: [
-          IconButton(
-            tooltip: 'Import / Restore Backup',
-            icon: const Icon(Icons.restore, color: Colors.white),
-            onPressed: _importBackupFile,
-          ),
-          IconButton(
-            tooltip: 'Backup / Send to Self',
-            icon: const Icon(Icons.backup, color: Colors.white),
-            onPressed: _createAndShareBackup,
-          ),
+          IconButton(tooltip: 'Restore from Google Drive', icon: const Icon(Icons.cloud_download, color: Colors.white), onPressed: _restoreFromGoogleDrive),
+          IconButton(tooltip: 'Backup to Google Drive', icon: const Icon(Icons.cloud_upload, color: Colors.white), onPressed: _backupToGoogleDrive),
         ],
         title: const Text('LxH ONE', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFE65100),
