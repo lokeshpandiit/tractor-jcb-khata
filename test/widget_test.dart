@@ -22,6 +22,16 @@ void main() {
     expect(find.text('Parties'), findsOneWidget);
     expect(find.text('Khata'), findsOneWidget);
 
+    // Message Settings now includes independent customer-payment and driver-statement templates.
+    await tester.tap(find.byTooltip('Message Settings'));
+    await tester.pumpAndSettle();
+    expect(find.text('Customer Payment Receipt — SMS'), findsOneWidget);
+    expect(find.text('Customer Payment Receipt — WhatsApp'), findsOneWidget);
+    expect(find.text('Driver Salary Statement — SMS'), findsOneWidget);
+    expect(find.text('Driver Salary Statement — WhatsApp'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
     // Fleet folders contain only vehicle master information.
     expect(find.text('Tractor Fleet List'), findsOneWidget);
     expect(find.text('Add Tractor'), findsOneWidget);
