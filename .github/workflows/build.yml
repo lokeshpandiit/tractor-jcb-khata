@@ -134,6 +134,52 @@ jobs:
           }
           KOTLIN
 
+      - name: Configure stable signing for Google OAuth
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/lxh-upload-key.jks
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gradle = Path("android/app/build.gradle")
+          text = gradle.read_text(encoding="utf-8")
+          old = """    buildTypes {
+                  release {
+                      signingConfig signingConfigs.debug
+                  }
+              }"""
+          new = """    if (file("lxh-upload-key.jks").exists()) {
+                  signingConfigs {
+                      lxhRelease {
+                          storeFile file("lxh-upload-key.jks")
+                          storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+                          keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: ""
+                          keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: ""
+                      }
+                  }
+              }
+
+              buildTypes {
+                  release {
+                      if (file("lxh-upload-key.jks").exists()) {
+                          signingConfig signingConfigs.lxhRelease
+                      } else {
+                          signingConfig signingConfigs.debug
+                      }
+                  }
+              }"""
+          if old not in text:
+              raise SystemExit("Could not find the generated release signing block.")
+          gradle.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
       - name: Get Dependencies
         run: flutter pub get
 
