@@ -326,6 +326,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
     await prefs.setString('active_google_email', account.email);
     await prefs.setBool('lxh_has_linked_google_account', true);
+    await prefs.setBool(prefix + 'drive_restore_pending', _driveRestoreFailed);
+    if (!_driveRestoreFailed) {
+      await prefs.setBool(prefix + 'account_initialized', true);
+    }
     _activeGoogleAccount = account;
     await _loadData();
 
@@ -338,6 +342,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   Future<void> _changeGoogleAccount() async {
     await _saveData();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('active_google_email');
     await GoogleDriveBackupService.signOut();
     if (!mounted) return;
     setState(() {
