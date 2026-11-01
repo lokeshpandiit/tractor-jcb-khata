@@ -404,22 +404,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   void _openWorkEntryModal(String vehicleType) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => WorkEntrySheet(
-        vehicleType: vehicleType,
-        vehicles: vehicles.where((v) => v.type == vehicleType).toList(),
-        workers: workers,
-        clients: clients,
-        onSave: (log) {
-          setState(() {
-            logs.insert(0, log);
-          });
-          _saveData();
-        },
-      ),
-    );
+    if (vehicles.isEmpty || workers.isEmpty || clients.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pehle machine, driver aur client add karein.')));
+      return;
+    }
+    showModalBottomSheet(context: context, isScrollControlled: true, builder: (_) => WorkEntrySheet(
+      vehicleType: 'Work', vehicles: vehicles, workers: workers, clients: clients,
+      onSave: (log) { setState(() => logs.insert(0, log)); _saveData(); },
+    ));
   }
 
   void _deleteVehicle(Vehicle v) {
@@ -646,10 +638,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           const Text('Machine Name', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white),
-            onPressed: _addMachineDialog, icon: const Icon(Icons.add), label: const Text('Add Machine'),
-          ),
+          Wrap(spacing: 6, children: [
+            OutlinedButton.icon(onPressed: () => _openWorkEntryModal('All'), icon: const Icon(Icons.work), label: const Text('Work Entry')),
+            ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white), onPressed: _addMachineDialog, icon: const Icon(Icons.add), label: const Text('Add Machine')),
+          ]),
         ]),
         const SizedBox(height: 12),
         ...vehicles.map((v) => Card(child: ListTile(
@@ -981,15 +973,14 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
           children: [
             Text('New ${widget.vehicleType} Entry', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 14),
-            TextField(
-              controller: machineNameCtrl,
-              decoration: InputDecoration(labelText: '${widget.vehicleType} Name (eg. Mahindra 575)'),
+            DropdownButtonFormField<Vehicle>(
+              value: selectedVehicle,
+              decoration: const InputDecoration(labelText: 'Select Machine'),
+              items: widget.vehicles.map((v) => DropdownMenuItem(value: v, child: Text('${v.name} • ${v.type}'))).toList(),
+              onChanged: (v) => setState(() { selectedVehicle = v; if (v != null) { machineNameCtrl.text = v.name; machineNoCtrl.text = v.number; rateCtrl.text = v.defaultRate.toStringAsFixed(0); _recalculate(); } }),
             ),
             const SizedBox(height: 10),
-            TextField(
-              controller: machineNoCtrl,
-              decoration: const InputDecoration(labelText: 'Machine Number (eg. HR-24-A-1020)'),
-            ),
+            TextFormField(controller: machineNoCtrl, readOnly: true, decoration: const InputDecoration(labelText: 'Machine Number')),
             const SizedBox(height: 10),
             DropdownButtonFormField<Person>(
               value: selectedWorker,
@@ -1015,13 +1006,7 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: rateCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(labelText: 'Rate / Hour (₹)', hintText: 'eg. 800'),
-                  ),
-                ),
+                Expanded(child: TextFormField(controller: rateCtrl, readOnly: true, decoration: const InputDecoration(labelText: 'Machine Rate / Hour (₹)'))),
               ],
             ),
             const SizedBox(height: 16),
@@ -1048,13 +1033,13 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
                   final log = WorkLog(
                     id: DateTime.now().toString(),
                     date: DateFormat('dd MMM yyyy').format(selectedDate),
-                    vehicleName: machineNameCtrl.text,
-                    vehicleType: widget.vehicleType,
+                    vehicleName: selectedVehicle!.name,
+                    vehicleType: selectedVehicle!.type,
                     driverName: selectedWorker!.name,
                     clientName: selectedClient!.name,
                     clientPhone: selectedClient!.phone,
                     hours: double.tryParse(hoursCtrl.text) ?? 0,
-                    rate: double.tryParse(rateCtrl.text) ?? 0,
+                    rate: selectedVehicle!.defaultRate,
                     totalAmount: calculatedTotal,
                   );
                   widget.onSave(log);
