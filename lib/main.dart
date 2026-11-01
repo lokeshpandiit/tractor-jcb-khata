@@ -462,9 +462,32 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // WhatsApp launcher
-  void _sendWhatsApp(WorkLog log) async {
-    final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
+  String? _normalizedWhatsAppNumber(String rawPhone) {
+    var digits = rawPhone.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('00')) {
+      digits = digits.substring(2);
+    }
+    if (digits.length == 11 && digits.startsWith('0')) {
+      digits = digits.substring(1);
+    }
+    // A plain 10-digit number is treated as an Indian mobile number.
+    if (digits.length == 10) {
+      digits = '91$digits';
+    }
+    if (digits.length < 8 || digits.length > 15) return null;
+    return digits;
+  }
+
+  // WhatsApp launcher: normalize the country code before opening wa.me.
+  Future<void> _sendWhatsApp(WorkLog log) async {
+    final phone = _normalizedWhatsAppNumber(log.clientPhone);
+    if (phone == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please check this phone number.')),
+      );
+      return;
+    }
+
     final msg = '*Tractor/JCB Work Slip*\n\n'
         'Party: *${log.clientName}*\n'
         'Date: ${log.date}\n'
@@ -475,44 +498,37 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         '-------------------------\n'
         '💰 *Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}*';
 
-    final uri = Uri.parse('https://wa.me/91$cleanPhone?text=${Uri.encodeComponent(msg)}');
-    
+    final uri = Uri.parse(
+      'https://wa.me/$phone?text=${Uri.encodeComponent(msg)}',
+    );
     try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('WhatsApp could not be opened!')),
+          SnackBar(content: Text('Could not open WhatsApp: $e')),
         );
       }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
     }
   }
 
-  void _sendSMS(WorkLog log) async {
-    final cleanPhone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
+  Future<void> _sendSMS(WorkLog log) async {
+    final phone = log.clientPhone.replaceAll(RegExp(r'\D'), '');
     final message = 'Namaste ${log.clientName}, aapke yahan ${log.date} ko ${log.vehicleName} ne ${log.hours} ghante kaam kiya @ ₹${log.rate}/hr. Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}. - LxH ONE';
-    
     final uri = Uri(
-      scheme: 'sms',
-      path: cleanPhone,
+      scheme: 'smsto',
+      path: phone,
       queryParameters: {'body': message},
     );
 
     try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        final fallbackUri = Uri.parse('sms:$cleanPhone?body=${Uri.encodeComponent(message)}');
-        await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
-      }
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open SMS: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open SMS: $e')),
+        );
+      }
     }
   }
 
