@@ -256,6 +256,49 @@ String _normalizePhone(String value) {
   return digits;
 }
 
+
+Future<void> _openSmsComposerWithMessage(BuildContext context, String rawPhone, String message) async {
+  final phone = _normalizePhone(rawPhone);
+  if (phone.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Mobile number is not valid.')));
+    return;
+  }
+  try {
+    await const MethodChannel('com.example.tractor_jcb_khata/sms').invokeMethod<bool>(
+      'openSms',
+      <String, String>{'phone': phone, 'message': message},
+    );
+  } on PlatformException catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('SMS app could not be opened: ${e.message ?? e.code}')),
+    );
+  } on MissingPluginException {
+    final uri = Uri(scheme: 'smsto', path: phone, queryParameters: <String, String>{'body': message});
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('SMS app could not be opened.')));
+    }
+  }
+}
+
+Future<void> _openWhatsAppWithMessage(BuildContext context, String rawPhone, String message) async {
+  var phone = _normalizePhone(rawPhone);
+  if (phone.length == 10) phone = '91$phone';
+  if (phone.length < 10 || phone.length > 15) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Mobile number is not valid.')));
+    return;
+  }
+  final uri = Uri.parse('https://wa.me/$phone?text=${Uri.encodeComponent(message)}');
+  try {
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('WhatsApp could not be opened.')));
+    }
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('WhatsApp could not be opened: $e')));
+  }
+}
+
+
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
@@ -717,6 +760,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final whatsappController = TextEditingController(
       text: prefs.getString(_accountKey('whatsapp_message_template')) ?? _defaultWhatsAppTemplate(),
     );
+    final customerSmsController = TextEditingController(text: prefs.getString(_accountKey('customer_payment_sms_template')) ?? _defaultCustomerPaymentSmsTemplate());
+    final customerWhatsAppController = TextEditingController(text: prefs.getString(_accountKey('customer_payment_whatsapp_template')) ?? _defaultCustomerPaymentWhatsAppTemplate());
+    final driverSmsController = TextEditingController(text: prefs.getString(_accountKey('driver_statement_sms_template')) ?? _defaultDriverStatementSmsTemplate());
+    final driverWhatsAppController = TextEditingController(text: prefs.getString(_accountKey('driver_statement_whatsapp_template')) ?? _defaultDriverStatementWhatsAppTemplate());
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -734,9 +781,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 TextField(controller: whatsappController, maxLines: 8, decoration: const InputDecoration(border: OutlineInputBorder())),
                 const SizedBox(height: 8),
                 const Text(
-                  'Available fields: {partyName}, {date}, {machineName}, {machineNumber}, {driverName}, {hours}, {rate}, {totalBill}',
+                  'Work bill fields: {partyName}, {date}, {machineName}, {machineNumber}, {driverName}, {hours}, {rate}, {totalBill}',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
+                const SizedBox(height: 16),
+                const Align(alignment: Alignment.centerLeft, child: Text('Customer Payment Receipt — SMS', style: TextStyle(fontWeight: FontWeight.bold))),
+                TextField(controller: customerSmsController, maxLines: 4, decoration: const InputDecoration(border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                const Align(alignment: Alignment.centerLeft, child: Text('Customer Payment Receipt — WhatsApp', style: TextStyle(fontWeight: FontWeight.bold))),
+                TextField(controller: customerWhatsAppController, maxLines: 5, decoration: const InputDecoration(border: OutlineInputBorder())),
+                const Text('Payment fields: {partyName}, {date}, {billTotal}, {previousPaid}, {paidNow}, {totalPaid}, {balanceDue}, {creditBalance}, {creditNote}, {balanceStatus}, {paymentDetails}', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 16),
+                const Align(alignment: Alignment.centerLeft, child: Text('Driver Salary Statement — SMS', style: TextStyle(fontWeight: FontWeight.bold))),
+                TextField(controller: driverSmsController, maxLines: 5, decoration: const InputDecoration(border: OutlineInputBorder())),
+                const SizedBox(height: 8),
+                const Align(alignment: Alignment.centerLeft, child: Text('Driver Salary Statement — WhatsApp', style: TextStyle(fontWeight: FontWeight.bold))),
+                TextField(controller: driverWhatsAppController, maxLines: 6, decoration: const InputDecoration(border: OutlineInputBorder())),
+                const Text('Driver fields: {driverName}, {date}, {salaryType}, {salaryRate}, {totalSalaryDue}, {salaryPaid}, {advanceTaken}, {otherPayments}, {totalPaid}, {balance}, {signedBalance}, {balanceStatus}, {latestEntryType}, {latestEntryAmount}, {latestEntryReason}', style: TextStyle(fontSize: 12, color: Colors.grey)),
               ],
             ),
           ),
@@ -747,6 +808,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             onPressed: () async {
               await prefs.setString(_accountKey('sms_message_template'), smsController.text);
               await prefs.setString(_accountKey('whatsapp_message_template'), whatsappController.text);
+              await prefs.setString(_accountKey('customer_payment_sms_template'), customerSmsController.text);
+              await prefs.setString(_accountKey('customer_payment_whatsapp_template'), customerWhatsAppController.text);
+              await prefs.setString(_accountKey('driver_statement_sms_template'), driverSmsController.text);
+              await prefs.setString(_accountKey('driver_statement_whatsapp_template'), driverWhatsAppController.text);
               await _saveData();
               if (dialogContext.mounted) Navigator.pop(dialogContext);
             },
@@ -757,7 +822,172 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
     smsController.dispose();
     whatsappController.dispose();
+    customerSmsController.dispose();
+    customerWhatsAppController.dispose();
+    driverSmsController.dispose();
+    driverWhatsAppController.dispose();
   }
+
+
+  String _defaultCustomerPaymentSmsTemplate() =>
+      'Namaste {partyName}, total work bill ₹{billTotal} tha. Pehle jama ₹{previousPaid}, abhi prapt ₹{paidNow}, kul jama ₹{totalPaid}. Baki ₹{balanceDue}{creditNote}. - LxH ONE';
+  String _defaultCustomerPaymentWhatsAppTemplate() =>
+      '*LxH ONE Payment Receipt*§n§nParty: *{partyName}*§nTotal Work Bill: ₹{billTotal}§nPrevious Jama: ₹{previousPaid}§nToday Received: *₹{paidNow}*§nTotal Jama: ₹{totalPaid}§n*Remaining Balance: ₹{balanceDue}*{creditNote}§nDate: {date}§n{paymentDetails}';
+  String _defaultDriverStatementSmsTemplate() =>
+      'Namaste {driverName}, {date} tak total salary due ₹{totalSalaryDue}, salary paid ₹{salaryPaid}, advance ₹{advanceTaken}, other payment ₹{otherPayments}. Total received ₹{totalPaid}. Balance: {signedBalance}. {balanceStatus}. Latest: {latestEntryType} ₹{latestEntryAmount} ({latestEntryReason}). - LxH ONE';
+  String _defaultDriverStatementWhatsAppTemplate() =>
+      '*LxH ONE — Driver Khata Statement*§n§nDriver: *{driverName}*§nSalary Setting: ₹{salaryRate}/{salaryType}§nTotal Salary Due: ₹{totalSalaryDue}§nSalary Paid: ₹{salaryPaid}§nAdvance Taken: ₹{advanceTaken}§nOther Payments: ₹{otherPayments}§nTotal Received: *₹{totalPaid}*§n*Balance: {signedBalance}*§n{balanceStatus}§n§nLatest Entry: {latestEntryType} — ₹{latestEntryAmount}§nReason: {latestEntryReason}§nDate: {date}';
+
+  String _applyMessageValues(String template, Map<String, String> values) {
+    var result = template;
+    for (final entry in values.entries) {
+      result = result.replaceAll(entry.key, entry.value);
+    }
+    return result;
+  }
+
+  Future<void> _showCustomerPaymentReceiptOptions(Person party, CashEntry payment) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(children: [
+          const ListTile(
+            title: Text('Payment saved. Send updated balance?'),
+            subtitle: Text('Customer ko received amount aur remaining balance bhejein.'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.sms_outlined, color: Colors.blue),
+            title: const Text('Send by SMS'),
+            onTap: () { Navigator.pop(sheetContext); _sendCustomerPaymentReceipt(party, payment, 'sms'); },
+          ),
+          ListTile(
+            leading: const Icon(Icons.chat, color: Colors.green),
+            title: const Text('Send by WhatsApp'),
+            onTap: () { Navigator.pop(sheetContext); _sendCustomerPaymentReceipt(party, payment, 'whatsapp'); },
+          ),
+          ListTile(
+            leading: const Icon(Icons.close),
+            title: const Text('Not now'),
+            onTap: () => Navigator.pop(sheetContext),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _sendCustomerPaymentReceipt(Person party, CashEntry payment, String channel) async {
+    final prefs = await SharedPreferences.getInstance();
+    final billTotal = _partyBillTotal(party.id);
+    final totalPaid = _partyReceivedTotal(party.id);
+    final previousPaid = totalPaid - payment.amount;
+    final rawBalance = billTotal - totalPaid;
+    final balanceDue = rawBalance > 0 ? rawBalance : 0.0;
+    final credit = rawBalance < 0 ? rawBalance.abs() : 0.0;
+    final values = <String, String>{
+      '{partyName}': party.name,
+      '{date}': payment.date,
+      '{billTotal}': billTotal.toStringAsFixed(0),
+      '{previousPaid}': previousPaid.toStringAsFixed(0),
+      '{paidNow}': payment.amount.toStringAsFixed(0),
+      '{totalPaid}': totalPaid.toStringAsFixed(0),
+      '{balanceDue}': balanceDue.toStringAsFixed(0),
+      '{creditBalance}': credit.toStringAsFixed(0),
+      '{creditNote}': credit > 0 ? ' (Aapka extra jama/credit ₹§{credit.toStringAsFixed(0)} hai.)' : '',
+      '{balanceStatus}': balanceDue > 0
+          ? '₹§{balanceDue.toStringAsFixed(0)} abhi baki hain.'
+          : credit > 0 ? 'Aapka ₹§{credit.toStringAsFixed(0)} advance/credit hamare paas hai.' : 'Aapka hisab poora clear hai.',
+      '{paymentDetails}': payment.title,
+    };
+    final key = channel == 'sms' ? 'customer_payment_sms_template' : 'customer_payment_whatsapp_template';
+    final fallback = channel == 'sms' ? _defaultCustomerPaymentSmsTemplate() : _defaultCustomerPaymentWhatsAppTemplate();
+    final message = _applyMessageValues(prefs.getString(_accountKey(key)) ?? fallback, values);
+    if (channel == 'sms') {
+      await _openSmsComposerWithMessage(context, party.phone, message);
+    } else {
+      await _openWhatsAppWithMessage(context, party.phone, message);
+    }
+  }
+
+  Future<void> _showDriverStatementOptions(Person driver, DriverLedgerEntry? latestEntry) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(children: [
+          const ListTile(
+            title: Text('Send Driver Khata Statement'),
+            subtitle: Text('Salary, paid amount, advance aur remaining balance.'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.sms_outlined, color: Colors.blue),
+            title: const Text('Send by SMS'),
+            onTap: () { Navigator.pop(sheetContext); _sendDriverStatement(driver, latestEntry, 'sms'); },
+          ),
+          ListTile(
+            leading: const Icon(Icons.chat, color: Colors.green),
+            title: const Text('Send by WhatsApp'),
+            onTap: () { Navigator.pop(sheetContext); _sendDriverStatement(driver, latestEntry, 'whatsapp'); },
+          ),
+          ListTile(leading: const Icon(Icons.close), title: const Text('Not now'), onTap: () => Navigator.pop(sheetContext)),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _sendDriverStatement(Person driver, DriverLedgerEntry? latestEntry, String channel) async {
+    final prefs = await SharedPreferences.getInstance();
+    final driverEntries = driverLedger.where((e) => e.driverId == driver.id).toList();
+    double total(String type) => driverEntries.where((e) => e.type == type).fold(0.0, (sum, e) => sum + e.amount);
+    final salaryDue = total('Salary Due');
+    final salaryPaid = total('Salary Paid');
+    final advances = total('Advance');
+    final other = total('Other Payment');
+    final paidTotal = salaryPaid + advances + other;
+    final balance = salaryDue - paidTotal;
+    final signedBalance = balance < 0 ? '-₹§{balance.abs().toStringAsFixed(0)}' : '₹§{balance.toStringAsFixed(0)}';
+    final status = balance > 0
+        ? 'Aapki salary me se ₹§{balance.toStringAsFixed(0)} dena baki hai.'
+        : balance < 0
+            ? 'Aapne total salary se ₹§{balance.abs().toStringAsFixed(0)} zyada le liye hain. Agli salary me adjust hoga.'
+            : 'Aapka salary hisab barabar hai.';
+    final values = <String, String>{
+      '{driverName}': driver.name,
+      '{date}': latestEntry?.date ?? DateFormat('dd MMM yyyy').format(DateTime.now()),
+      '{salaryType}': driver.salaryType,
+      '{salaryRate}': driver.salaryAmount.toStringAsFixed(0),
+      '{totalSalaryDue}': salaryDue.toStringAsFixed(0),
+      '{salaryPaid}': salaryPaid.toStringAsFixed(0),
+      '{advanceTaken}': advances.toStringAsFixed(0),
+      '{otherPayments}': other.toStringAsFixed(0),
+      '{totalPaid}': paidTotal.toStringAsFixed(0),
+      '{balance}': balance.toStringAsFixed(0),
+      '{signedBalance}': signedBalance,
+      '{balanceStatus}': status,
+      '{latestEntryType}': latestEntry?.type ?? 'Statement',
+      '{latestEntryAmount}': (latestEntry?.amount ?? 0).toStringAsFixed(0),
+      '{latestEntryReason}': latestEntry?.reason ?? 'Current account summary',
+    };
+    final key = channel == 'sms' ? 'driver_statement_sms_template' : 'driver_statement_whatsapp_template';
+    final fallback = channel == 'sms' ? _defaultDriverStatementSmsTemplate() : _defaultDriverStatementWhatsAppTemplate();
+    final message = _applyMessageValues(prefs.getString(_accountKey(key)) ?? fallback, values);
+    if (channel == 'sms') {
+      await _openSmsComposerWithMessage(context, driver.phone, message);
+    } else {
+      await _openWhatsAppWithMessage(context, driver.phone, message);
+    }
+  }
+
+  Future<void> _recordDriverPaymentInCashBook(Person driver, DriverLedgerEntry entry) async {
+    if (entry.type != 'Salary Due') {
+      cashBook.insert(0, CashEntry(
+        title: 'Driver payment: §{driver.name} • §{entry.type} • §{entry.reason}',
+        amount: entry.amount,
+        type: 'Kharcha',
+        date: entry.date,
+      ));
+    }
+    await _saveData();
+  }
+
 
   void _addAdvanceRequestDialog() {
     final nameController = TextEditingController();
@@ -1317,6 +1547,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           onChanged: () async {
             await _saveData();
           },
+          onEntrySaved: (entry) async {
+            await _recordDriverPaymentInCashBook(driver, entry);
+          },
+          onSendStatement: (entry) async {
+            await _showDriverStatementOptions(driver, entry);
+          },
         ),
       ),
     );
@@ -1767,30 +2003,33 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ])),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
-            ElevatedButton(onPressed: () {
+            ElevatedButton(onPressed: () async {
               final amount = double.tryParse(amountController.text.trim()) ?? 0;
               if (amount <= 0 || (type == 'Jama' &&
                   (selectedPartyId == null || !clients.any((p) => p.id == selectedPartyId)))) {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Valid amount aur Party select karein.')));
                 return;
               }
-              final selected = clients.where((p) => p.id == selectedPartyId).toList();
-              final partyName = selected.isEmpty ? '' : selected.first.name;
+              final matches = clients.where((p) => p.id == selectedPartyId).toList();
+              final Person? party = matches.isEmpty ? null : matches.first;
+              final partyName = party?.name ?? '';
               final detail = detailController.text.trim();
-              setState(() {
-                cashBook.insert(0, CashEntry(
-                  title: detail.isNotEmpty ? detail :
-                    (type == 'Jama' ? 'Payment received from $partyName' : 'Kharcha'),
-                  amount: amount, type: type,
-                  date: DateFormat('dd MMM yyyy').format(DateTime.now()),
-                  partyId: type == 'Jama' ? selectedPartyId ?? '' : '',
-                  partyName: type == 'Jama' ? partyName : '',
-                ));
-              });
-              _saveData();
+              final payment = CashEntry(
+                title: detail.isNotEmpty ? detail : (type == 'Jama' ? 'Payment received from $partyName' : 'Kharcha'),
+                amount: amount,
+                type: type,
+                date: DateFormat('dd MMM yyyy').format(DateTime.now()),
+                partyId: type == 'Jama' ? selectedPartyId ?? '' : '',
+                partyName: type == 'Jama' ? partyName : '',
+              );
+              setState(() => cashBook.insert(0, payment));
               Navigator.pop(dialogContext);
               detailController.dispose();
               amountController.dispose();
+              await _saveData();
+              if (mounted && type == 'Jama' && party != null) {
+                await _showCustomerPaymentReceiptOptions(party, payment);
+              }
             }, child: const Text('Save')),
           ],
         ),
@@ -2004,12 +2243,16 @@ class DriverKhataScreen extends StatefulWidget {
   final Person driver;
   final List<DriverLedgerEntry> entries;
   final VoidCallback onChanged;
+  final Future<void> Function(DriverLedgerEntry entry) onEntrySaved;
+  final Future<void> Function(DriverLedgerEntry? entry) onSendStatement;
 
   const DriverKhataScreen({
     super.key,
     required this.driver,
     required this.entries,
     required this.onChanged,
+    required this.onEntrySaved,
+    required this.onSendStatement,
   });
 
   @override
@@ -2027,7 +2270,9 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
       .where((entry) => entry.type == type)
       .fold(0.0, (sum, entry) => sum + entry.amount);
 
-  String _money(double amount) => '₹${amount.toStringAsFixed(0)}';
+  String _money(double amount) => amount < 0
+      ? '-₹${amount.abs().toStringAsFixed(0)}'
+      : '₹${amount.toStringAsFixed(0)}';
 
   Future<void> _setSalary() async {
     final amountController = TextEditingController(
@@ -2207,20 +2452,17 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
     reasonController.dispose();
 
     if (saved == true && amount != null && amount > 0 && reason.isNotEmpty) {
-      setState(() {
-        widget.entries.insert(
-          0,
-          DriverLedgerEntry(
-            id: DateTime.now().microsecondsSinceEpoch.toString(),
-            driverId: widget.driver.id,
-            type: type,
-            amount: amount,
-            reason: reason,
-            date: DateFormat('dd MMM yyyy').format(entryDate),
-          ),
-        );
-      });
-      widget.onChanged();
+      final entry = DriverLedgerEntry(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        driverId: widget.driver.id,
+        type: type,
+        amount: amount,
+        reason: reason,
+        date: DateFormat('dd MMM yyyy').format(entryDate),
+      );
+      setState(() => widget.entries.insert(0, entry));
+      await widget.onEntrySaved(entry);
+      if (mounted) await widget.onSendStatement(entry);
     }
   }
 
@@ -2260,8 +2502,9 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
     final salaryPaid = _totalFor('Salary Paid');
     final advances = _totalFor('Advance');
     final otherPayments = _totalFor('Other Payment');
-    // Other payments are shown separately and do not reduce the salary balance.
-    final balance = salaryDue - salaryPaid - advances;
+    // All actual payments given to the driver reduce the salary balance.
+    final totalReceivedByDriver = salaryPaid + advances + otherPayments;
+    final balance = salaryDue - totalReceivedByDriver;
 
     return Scaffold(
       appBar: AppBar(
@@ -2308,17 +2551,25 @@ class _DriverKhataScreenState extends State<DriverKhataScreen> {
               _summaryCard('Salary Due', salaryDue, Colors.orange),
               _summaryCard('Salary Paid', salaryPaid, Colors.green),
               _summaryCard('Advance', advances, Colors.blue),
-              _summaryCard('Balance Due', balance, balance >= 0 ? Colors.red : Colors.deepPurple),
+              _summaryCard(balance >= 0 ? 'Balance Due' : 'Extra Taken', balance, balance >= 0 ? Colors.red : Colors.deepPurple),
             ],
           ),
           const SizedBox(height: 12),
-          if (otherPayments > 0)
-            Card(
-              child: ListTile(
-                title: const Text('Other Payments'),
-                trailing: Text(_money(otherPayments)),
+          Card(
+            child: ListTile(
+              title: const Text('Total Given to Driver'),
+              subtitle: Text('Salary paid + advance + other payments: ${_money(totalReceivedByDriver)}'),
+              trailing: Text(
+                balance < 0 ? '-${_money(balance.abs())}' : _money(balance),
+                style: TextStyle(fontWeight: FontWeight.bold, color: balance < 0 ? Colors.deepPurple : Colors.red),
               ),
             ),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => widget.onSendStatement(_driverEntries.isEmpty ? null : _driverEntries.first),
+            icon: const Icon(Icons.send),
+            label: const Text('Send Salary / Advance Statement'),
+          ),
           ElevatedButton.icon(
             onPressed: _addLedgerEntry,
             icon: const Icon(Icons.add),
