@@ -4,6 +4,9 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -201,7 +204,81 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       cashBook = decoded.map((e) => CashEntry.fromJson(e)).toList();
     }
 
-    setState(() {});
+    if (mounted) setState(() {});
+    _maybeShowDailyBackupPrompt();
+  }
+
+  Future<void> _maybeShowDailyBackupPrompt() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    if (prefs.getString('last_backup_prompt_date') == today || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Daily Data Backup'),
+          content: const Text('Aaj apne LxH ONE ka data backup bana kar WhatsApp par apni khud ki chat mein bhej dein. Isse phone badalne par data safe rahega.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Later')),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.share),
+              label: const Text('Send to Self'),
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _createAndShareBackup();
+              },
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
+  Future<File> _createBackupFile() async {
+    await _saveData();
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now().toUtc();
+    final payload = <String, dynamic>{
+      'app': 'LxH ONE',
+      'schemaVersion': 1,
+      'createdAtUtc': now.toIso8601String(),
+      'appVersion': '1.0.0+1',
+      'vehicles': vehicles.map((e) => e.toJson()).toList(),
+      'workers': workers.map((e) => e.toJson()).toList(),
+      'clients': clients.map((e) => e.toJson()).toList(),
+      'workLogs': logs.map((e) => e.toJson()).toList(),
+      'cashBook': cashBook.map((e) => e.toJson()).toList(),
+    };
+    final directory = await getApplicationDocumentsDirectory();
+    final fileName = 'LxH_ONE_Backup_${DateFormat('yyyy-MM-dd_HH-mm-ss').format(DateTime.now())}.json';
+    final file = File('${directory.path}/$fileName');
+    await file.writeAsString(const JsonEncoder.withIndent('  ').convert(payload), flush: true);
+    await prefs.setString('latest_backup_file', file.path);
+    return file;
+  }
+
+  Future<void> _createAndShareBackup() async {
+    try {
+      final file = await _createBackupFile();
+      final result = await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'application/json', name: file.uri.pathSegments.last)],
+        subject: 'LxH ONE Data Backup',
+        text: 'LxH ONE ka complete data backup. Is file ko apni WhatsApp chat (Message Yourself) mein bhej kar safe rakhein.',
+      );
+      final prefs = await SharedPreferences.getInstance();
+      if (result.status != ShareResultStatus.unavailable) {
+        await prefs.setString('last_backup_prompt_date', DateFormat('yyyy-MM-dd').format(DateTime.now()));
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Backup file ready: ${file.uri.pathSegments.last}. WhatsApp mein apni chat select karke Send dabayein.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Backup failed: $e')));
+    }
   }
 
   Future<void> _saveData() async {
@@ -427,6 +504,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        actions: [
+          IconButton(
+            tooltip: 'Backup / Send to Self',
+            icon: const Icon(Icons.backup, color: Colors.white),
+            onPressed: _createAndShareBackup,
+          ),
+        ],
         title: const Text('LxH ONE', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFE65100),
         elevation: 2,
