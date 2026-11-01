@@ -2,15 +2,14 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:cryptography_flutter/cryptography_flutter.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'backup_encryption.dart';
-
 import 'package:flutter/widgets.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
+import 'backup_encryption.dart';
 const String _driveScope = 'https://www.googleapis.com/auth/drive.file';
 const String _driveFolderName = 'LxH ONE Backup';
 const String _backupTaskName = 'lxhDailyDriveBackup';
@@ -78,8 +77,9 @@ class GoogleDriveBackupService {
   }
 
   static Future<Map<String, dynamic>?> restoreLatest(
-    GoogleSignInAccount account,
-  ) async {
+    GoogleSignInAccount account, {
+    String? backupPassword,
+  }) async {
     _ensureConfigured();
     final client = http.Client();
     try {
@@ -119,11 +119,22 @@ class GoogleDriveBackupService {
       if (backup is! Map<String, dynamic>) {
         throw const FormatException('Drive backup file is not a valid JSON object.');
       }
-      final ownerEmail = (backup['accountEmail'] ?? '').toString().toLowerCase();
+      Map<String, dynamic> restored = backup;
+      if (BackupEncryptionService.isEncryptedEnvelope(backup)) {
+        if (backupPassword == null || backupPassword.isEmpty) {
+          throw const BackupPasswordRequiredException();
+        }
+        restored = await BackupEncryptionService.decrypt(
+          backup,
+          password: backupPassword,
+        );
+      }
+
+      final ownerEmail = (restored['accountEmail'] ?? '').toString().toLowerCase();
       if (ownerEmail.isNotEmpty && ownerEmail != account.email.toLowerCase()) {
         throw StateError('This backup belongs to a different Google account. It was not restored.');
       }
-      return backup;
+      return restored;
     } finally {
       client.close();
     }
@@ -132,6 +143,7 @@ class GoogleDriveBackupService {
   static Future<void> backup(
     GoogleSignInAccount account,
     Map<String, dynamic> data, {
+    required String backupPassword,
     bool createNewVersion = false,
   }) async {
     _ensureConfigured();
@@ -161,6 +173,10 @@ class GoogleDriveBackupService {
         'exportedAt': DateTime.now().toUtc().toIso8601String(),
         'data': data,
       };
+      final encryptedPayload = await BackupEncryptionService.encrypt(
+        backupPayload,
+        password: backupPassword,
+      );
 
       final query = "'$folderId' in parents and name = '$fileName' and trashed = false";
       final listUri = Uri.https('www.googleapis.com', '/drive/v3/files', {
@@ -189,7 +205,7 @@ class GoogleDriveBackupService {
             ...headers,
             'Content-Type': 'application/json; charset=UTF-8',
           },
-          body: jsonEncode(backupPayload),
+          body: jsonEncode(encryptedPayload),
         );
         _checkResponse(response, 'Could not update today\'s Drive backup');
       } else {
@@ -204,7 +220,7 @@ class GoogleDriveBackupService {
             '${jsonEncode(metadata)}\r\n'
             '--$boundary\r\n'
             'Content-Type: application/json; charset=UTF-8\r\n\r\n'
-            '${jsonEncode(backupPayload)}\r\n'
+            '${jsonEncode(encryptedPayload)}\r\n'
             '--$boundary--';
         final uploadUri = Uri.https(
           'www.googleapis.com',
@@ -286,6 +302,7 @@ class GoogleDriveBackupService {
 @pragma('vm:entry-point')
 void lxhDailyBackupDispatcher() {
   WidgetsFlutterBinding.ensureInitialized();
+  FlutterCryptography.enable();
   Workmanager().executeTask((taskName, inputData) async {
     if (taskName != _backupTaskName || !GoogleDriveBackupService.isConfigured) {
       return true;
@@ -309,6 +326,11 @@ void lxhDailyBackupDispatcher() {
       final accessToken = auth.accessToken;
       if (accessToken == null || accessToken.isEmpty) return false;
       final prefix = accountStoragePrefix(email);
+      final backupPassword = await const FlutterSecureStorage().read(
+        key: backupPasswordStorageKey(email),
+      );
+      if (backupPassword == null || backupPassword.isEmpty) return false;
+
       final previouslyInitialized = prefs.getBool(prefix + 'account_initialized') ?? false;
       final hasUnsyncedLocalChanges =
           prefs.getBool(prefix + 'unsynced_local_changes') ?? false;
@@ -316,7 +338,7 @@ void lxhDailyBackupDispatcher() {
       // If an earlier foreground restore failed, complete it before uploading
       // anything so an empty device cannot overwrite a real cloud backup.
       if (prefs.getBool(prefix + 'drive_restore_pending') ?? false) {
-        final remoteBackup = await GoogleDriveBackupService.restoreLatest(account);
+        final remoteBackup = await GoogleDriveBackupService.restoreLatest(account, backupPassword: backupPassword);
 
         // On a first login with no cloud file yet, leave legacy data migration
         // to the foreground app instead of uploading an empty snapshot.
@@ -359,6 +381,7 @@ void lxhDailyBackupDispatcher() {
       await GoogleDriveBackupService.backup(
         account,
         snapshot,
+        backupPassword: backupPassword,
         createNewVersion: hasUnsyncedLocalChanges,
       );
       await prefs.setBool(prefix + 'unsynced_local_changes', false);
