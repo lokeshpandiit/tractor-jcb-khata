@@ -294,10 +294,15 @@ void lxhDailyBackupDispatcher() {
       if (accessToken == null || accessToken.isEmpty) return false;
       final prefix = accountStoragePrefix(email);
 
+      final previouslyInitialized = prefs.getBool(prefix + 'account_initialized') ?? false;
+
       // If an earlier foreground restore failed, complete it before uploading
       // anything so an empty device cannot overwrite a real cloud backup.
       if (prefs.getBool(prefix + 'drive_restore_pending') ?? false) {
         final remoteBackup = await GoogleDriveBackupService.restoreLatest(account);
+        // On a first login with no cloud file yet, leave migration to the
+        // foreground app so it can safely import the old on-device database.
+        if (remoteBackup == null && !previouslyInitialized) return true;
         final remoteData = remoteBackup?['data'];
         if (remoteData is Map) {
           for (final entry in remoteData.entries) {
