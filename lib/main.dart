@@ -4,7 +4,6 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -394,12 +393,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void _addMultiplePersonsDialog(String role) async {
     try {
       var status = await Permission.contacts.status;
+      if (!mounted) return;
       if (!status.isGranted) {
         status = await Permission.contacts.request();
+        if (!mounted) return;
       }
 
       if (status.isGranted) {
         final Contact? contact = await FlutterContacts.openExternalPick();
+        if (!mounted) return;
         if (contact != null) {
           String name = contact.displayName;
           String phone = '';
@@ -430,6 +432,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         );
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error picking contact: $e')),
       );
@@ -450,10 +453,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         '-------------------------\n'
         '💰 *Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}*';
 
-    final uri = Uri.parse('https://wa.me/91$cleanPhone?text=${Uri.encodeComponent(msg)}');
+    final uri = Uri.parse('https://wa.me/$cleanPhone?text=${Uri.encodeComponent(msg)}');
     
     try {
-      if (await canLaunchUrl(uri)) {
+      final canOpen = await canLaunchUrl(uri);
+      if (!mounted) return;
+      if (canOpen) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -461,6 +466,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         );
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
@@ -478,13 +484,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
 
     try {
-      if (await canLaunchUrl(uri)) {
+      final canOpen = await canLaunchUrl(uri);
+      if (!mounted) return;
+      if (canOpen) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
         final fallbackUri = Uri.parse('sms:$cleanPhone?body=${Uri.encodeComponent(message)}');
         await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not open SMS: $e')),
       );
