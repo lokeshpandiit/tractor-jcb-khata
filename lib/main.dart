@@ -810,55 +810,55 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
 
   Widget _buildCashTab() {
-    double totalJama = cashBook.where((c) => c.type == 'Jama').fold(0.0, (sum, c) => sum + c.amount);
-    double totalKharcha = cashBook.where((c) => c.type == 'Kharcha').fold(0.0, (sum, c) => sum + c.amount);
+    final expenses=ledgerEntries.where((e)=>e.kind=='expense').toList();
+    final loans=ledgerEntries.where((e)=>e.kind=='loan').toList();
+    final expenseTotal=expenses.fold(0.0,(v,e)=>v+e.amount);
+    final loanPrincipal=loans.fold(0.0,(v,e)=>v+e.amount);
+    final loanInterest=loans.fold(0.0,(v,e)=>v+e.interest);
+    return ListView(padding:const EdgeInsets.all(16),children:[
+      const Text('Extra Kharch / Len-Den',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
+      const SizedBox(height:12),
+      Card(child:Padding(padding:const EdgeInsets.all(14),child:Column(children:[
+        _ledgerLine('Total Expense',expenseTotal),
+        _ledgerLine('Loan Principal Given',loanPrincipal),
+        _ledgerLine('Expected Interest',loanInterest),
+        _ledgerLine('Expected Total Return',loanPrincipal+loanInterest),
+      ]))),
+      Wrap(spacing:8,runSpacing:8,children:[
+        ElevatedButton.icon(onPressed:()=>_addGeneralEntry('expense'),icon:const Icon(Icons.remove_circle),label:const Text('Add Expense')),
+        ElevatedButton.icon(onPressed:()=>_addGeneralEntry('loan'),icon:const Icon(Icons.account_balance),label:const Text('Give Loan')),
+      ]),
+      const SizedBox(height:16),
+      const Text('Expenses',style:TextStyle(fontWeight:FontWeight.bold)),
+      ...expenses.map((e)=>ListTile(leading:const Icon(Icons.receipt_long,color:Colors.red),title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹\${e.amount.toStringAsFixed(0)}'))),
+      const Divider(),
+      const Text('Loan Ledger',style:TextStyle(fontWeight:FontWeight.bold)),
+      ...loans.map((e)=>ListTile(leading:const Icon(Icons.account_balance,color:Colors.blue),title:Text(e.title),subtitle:Text('\${e.date} • Principal ₹\${e.amount.toStringAsFixed(0)} • Interest ₹\${e.interest.toStringAsFixed(0)}'),trailing:Text('₹\${(e.amount+e.interest).toStringAsFixed(0)}'))),
+      if(expenses.isEmpty&&loans.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Center(child:Text('Abhi koi expense ya loan record nahi hai.'))),
+    ]);
+  }
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Card(
-          color: Colors.orange.shade50,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                Column(children: [
-                  const Text('Total Jama (Kamai)', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                  Text('₹${totalJama.toStringAsFixed(0)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green)),
-                ]),
-                Column(children: [
-                  const Text('Total Kharcha', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                  Text('₹${totalKharcha.toStringAsFixed(0)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
-                ]),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('Kharcha / Cash Entry', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            OutlinedButton.icon(
-              onPressed: _addExpenseDialog,
-              icon: const Icon(Icons.remove_circle, color: Colors.red),
-              label: const Text('Add Kharcha'),
-            )
-          ],
-        ),
-        const SizedBox(height: 12),
-        ...cashBook.map((c) => ListTile(
-          leading: Icon(c.type == 'Jama' ? Icons.arrow_downward : Icons.arrow_upward, color: c.type == 'Jama' ? Colors.green : Colors.red),
-          title: Text(c.title),
-          subtitle: Text(c.date),
-          trailing: Text(
-            '${c.type == 'Jama' ? '+' : '-'} ₹${c.amount.toStringAsFixed(0)}',
-            style: TextStyle(fontWeight: FontWeight.bold, color: c.type == 'Jama' ? Colors.green : Colors.red),
-          ),
-        )),
+  Future<void> _addGeneralEntry(String kind) async {
+    final person=TextEditingController(),amount=TextEditingController(),interest=TextEditingController(),note=TextEditingController();
+    final loan=kind=='loan';
+    await showDialog(context:context,builder:(ctx)=>AlertDialog(
+      title:Text(loan?'Give Loan':'Add Expense'),
+      content:Column(mainAxisSize:MainAxisSize.min,children:[
+        TextField(controller:loan?person:note,decoration:InputDecoration(labelText:loan?'Person Name':'Expense Detail (Diesel / Repair etc.)')),
+        TextField(controller:amount,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:InputDecoration(labelText:loan?'Principal Amount (₹)':'Expense Amount (₹)')),
+        if(loan)TextField(controller:interest,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Expected Interest (₹)')),
+      ]),
+      actions:[
+        TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancel')),
+        ElevatedButton(onPressed:(){
+          final value=double.tryParse(amount.text)??0,interestValue=double.tryParse(interest.text)??0;
+          final who=person.text.trim();
+          if(value<=0||(loan&&who.isEmpty))return;
+          setState(()=>ledgerEntries.insert(0,LedgerEntry(id:DateTime.now().microsecondsSinceEpoch.toString(),kind:kind,personName:loan?who:'',title:loan?who:(note.text.trim().isEmpty?'Expense':note.text.trim()),amount:value,interest:interestValue,date:DateFormat('dd MMM yyyy').format(DateTime.now()))));
+          _saveData();Navigator.pop(ctx);
+        },child:const Text('Save')),
       ],
-    );
+    ));
   }
 
   void _addExpenseDialog() {
