@@ -376,6 +376,9 @@ void lxhDailyBackupDispatcher() {
         final value = prefs.get(prefix + key);
         if (value != null) snapshot[key] = value;
       }
+      // If Android terminates this worker while uploading, the next run knows
+      // the local snapshot may not have reached Drive and preserves it separately.
+      await prefs.setBool(prefix + 'unsynced_local_changes', true);
       await GoogleDriveBackupService.backup(
         account,
         snapshot,
@@ -383,8 +386,24 @@ void lxhDailyBackupDispatcher() {
         createNewVersion: hasUnsyncedLocalChanges,
       );
       await prefs.setBool(prefix + 'unsynced_local_changes', false);
+      await prefs.setString(
+        'lxh_last_backup_' + account.email,
+        DateTime.now().toIso8601String(),
+      );
       return true;
     } catch (_) {
+      try {
+        final retryPrefs = await SharedPreferences.getInstance();
+        final retryEmail = retryPrefs.getString('active_google_email');
+        if (retryEmail != null && retryEmail.isNotEmpty) {
+          await retryPrefs.setBool(
+            accountStoragePrefix(retryEmail) + 'unsynced_local_changes',
+            true,
+          );
+        }
+      } catch (_) {
+        // WorkManager will retry; do not let a secondary preference error escape.
+      }
       return false;
     }
   });
