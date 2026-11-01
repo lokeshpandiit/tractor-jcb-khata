@@ -772,7 +772,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       length: 3,
       child: Column(
         children: [
-          Material(
+          const Material(
             color: Colors.white,
             child: TabBar(
               labelColor: const Color(0xFFE65100),
