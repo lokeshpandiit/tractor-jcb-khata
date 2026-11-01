@@ -607,6 +607,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final prefs = await SharedPreferences.getInstance();
     final prefix = accountStoragePrefix(account.email);
     var lastBackup = prefs.getString('lxh_last_backup_' + account.email);
+    var lastBackupDate = DateTime.tryParse(lastBackup ?? '');
     var pending = prefs.getBool(prefix + 'unsynced_local_changes') ?? false;
     var passwordSaved = (await _backupPasswordStorage.read(
       key: backupPasswordStorageKey(account.email),
@@ -662,9 +663,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     color: pending ? Colors.orange : Colors.green,
                   ),
                   title: const Text('Last Successful Backup'),
-                  subtitle: Text(lastBackup == null
+                  subtitle: Text(lastBackupDate == null
                       ? 'No successful backup recorded on this phone yet.'
-                      : DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.parse(lastBackup).toLocal())),
+                      : DateFormat('dd MMM yyyy, hh:mm a').format(lastBackupDate!.toLocal())),
                 ),
                 if (pending)
                   const Padding(
@@ -695,6 +696,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                           setSheetState(() {
                             busy = false;
                             lastBackup = newLast;
+                            lastBackupDate = DateTime.tryParse(newLast ?? '');
                             pending = newPending;
                             statusMessage = !newPending && newLast != null
                                 ? 'Encrypted backup completed successfully.'
