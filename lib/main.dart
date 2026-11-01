@@ -55,20 +55,17 @@ class Vehicle {
 }
 
 class Person {
-  final String id;
-  String name;
-  String phone;
-  final String role;
+  final String id; String name; String phone; final String role; bool active;
+  Person({required this.id, required this.name, required this.phone, required this.role, this.active = true});
+  Map<String, dynamic> toJson() => {'id':id,'name':name,'phone':phone,'role':role,'active':active};
+  factory Person.fromJson(Map<String,dynamic> j) => Person(id:j['id']??'',name:j['name']??'',phone:j['phone']??'',role:j['role']??'',active:j['active'] as bool? ?? true);
+}
 
-  Person({required this.id, required this.name, required this.phone, required this.role});
-
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'phone': phone, 'role': role};
-  factory Person.fromJson(Map<String, dynamic> json) => Person(
-    id: json['id'],
-    name: json['name'],
-    phone: json['phone'],
-    role: json['role'],
-  );
+class LedgerEntry {
+  final String id,kind,personName,title,date; final double amount,interest;
+  LedgerEntry({required this.id,required this.kind,required this.personName,required this.title,required this.amount,this.interest=0,required this.date});
+  Map<String,dynamic> toJson()=>{'id':id,'kind':kind,'personName':personName,'title':title,'amount':amount,'interest':interest,'date':date};
+  factory LedgerEntry.fromJson(Map<String,dynamic> j)=>LedgerEntry(id:j['id']??'',kind:j['kind']??'',personName:j['personName']??'',title:j['title']??'',amount:(j['amount']??0).toDouble(),interest:(j['interest']??0).toDouble(),date:j['date']??'');
 }
 
 class WorkLog {
@@ -149,6 +146,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   List<Person> clients = [];
   List<WorkLog> logs = [];
   List<CashEntry> cashBook = [];
+  List<LedgerEntry> ledgerEntries = [];
 
   @override
   void initState() {
@@ -205,6 +203,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       cashBook = decoded.map((e) => CashEntry.fromJson(e)).toList();
     }
 
+    final ledgerString = prefs.getString('ledger_entries_data');
+    if (ledgerString != null) { final List decoded = jsonDecode(ledgerString); ledgerEntries = decoded.map((e) => LedgerEntry.fromJson(e)).toList(); }
     if (mounted) setState(() {});
     _maybeShowDailyBackupPrompt();
   }
@@ -251,6 +251,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       'clients': clients.map((e) => e.toJson()).toList(),
       'workLogs': logs.map((e) => e.toJson()).toList(),
       'cashBook': cashBook.map((e) => e.toJson()).toList(),
+      'ledgerEntries': ledgerEntries.map((e) => e.toJson()).toList(),
     };
     final directory = await getApplicationDocumentsDirectory();
     final fileName = 'LxH_ONE_Backup_${DateFormat('yyyy-MM-dd_HH-mm-ss').format(DateTime.now())}.json';
@@ -314,6 +315,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       final restoredClients = readList('clients').map(Person.fromJson).toList();
       final restoredLogs = readList('workLogs').map(WorkLog.fromJson).toList();
       final restoredCash = readList('cashBook').map(CashEntry.fromJson).toList();
+      final restoredLedger = (decoded['ledgerEntries'] as List? ?? []).map((e) => LedgerEntry.fromJson(Map<String,dynamic>.from(e))).toList();
 
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
@@ -348,6 +350,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         'clients_data': prefs.getString('clients_data'),
         'logs_data': prefs.getString('logs_data'),
         'cash_data': prefs.getString('cash_data'),
+        'ledger_entries_data': prefs.getString('ledger_entries_data'),
       };
       try {
         await prefs.setString('vehicles_data', jsonEncode(restoredVehicles.map((e) => e.toJson()).toList()));
@@ -355,6 +358,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         await prefs.setString('clients_data', jsonEncode(restoredClients.map((e) => e.toJson()).toList()));
         await prefs.setString('logs_data', jsonEncode(restoredLogs.map((e) => e.toJson()).toList()));
         await prefs.setString('cash_data', jsonEncode(restoredCash.map((e) => e.toJson()).toList()));
+        await prefs.setString('ledger_entries_data', jsonEncode(restoredLedger.map((e) => e.toJson()).toList()));
       } catch (_) {
         for (final entry in rollback.entries) {
           if (entry.value == null) {
@@ -372,6 +376,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         clients = restoredClients;
         logs = restoredLogs;
         cashBook = restoredCash;
+        ledgerEntries = restoredLedger;
         selectedFilterDate = null;
       });
       if (mounted) {
@@ -395,6 +400,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     await prefs.setString('clients_data', jsonEncode(clients.map((e) => e.toJson()).toList()));
     await prefs.setString('logs_data', jsonEncode(logs.map((e) => e.toJson()).toList()));
     await prefs.setString('cash_data', jsonEncode(cashBook.map((e) => e.toJson()).toList()));
+    await prefs.setString('ledger_entries_data', jsonEncode(ledgerEntries.map((e) => e.toJson()).toList()));
   }
 
   void _openWorkEntryModal(String vehicleType) {
@@ -409,12 +415,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         onSave: (log) {
           setState(() {
             logs.insert(0, log);
-            cashBook.insert(0, CashEntry(
-              title: '${log.clientName} (${log.vehicleName})',
-              amount: log.totalAmount,
-              type: 'Jama',
-              date: log.date,
-            ));
           });
           _saveData();
         },
