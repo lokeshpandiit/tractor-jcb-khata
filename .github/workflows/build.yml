@@ -147,39 +147,33 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           gradle = Path("android/app/build.gradle")
           text = gradle.read_text(encoding="utf-8")
-          build_types_anchor = "    buildTypes {"
-          if build_types_anchor not in text:
-              raise SystemExit("Could not find the generated buildTypes block.")
-
-          signing_config = """    if (file("lxh-upload-key.jks").exists()) {
-                  signingConfigs {
-                      lxhRelease {
-                          storeFile file("lxh-upload-key.jks")
-                          storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
-                          keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: ""
-                          keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: ""
+          if "signingConfigs.lxhRelease" not in text:
+              text += """
+              
+              // Optional persistent release key supplied through repository secrets.
+              // Without it, Flutter's default debug signing remains active.
+              android {
+                  if (file("lxh-upload-key.jks").exists()) {
+                      signingConfigs {
+                          lxhRelease {
+                              storeFile file("lxh-upload-key.jks")
+                              storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+                              keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: ""
+                              keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: ""
+                          }
+                      }
+                      buildTypes {
+                          release {
+                              signingConfig signingConfigs.lxhRelease
+                          }
                       }
                   }
               }
-
-          """
-          if "signingConfigs.lxhRelease" not in text:
-              text = text.replace(build_types_anchor, signing_config + build_types_anchor, 1)
-
-          pattern = r"(?m)^(\s*)signingConfig\s+signingConfigs\.debug\s*$"
-          replacement = r"""\1if (file("lxh-upload-key.jks").exists()) {
-          \1    signingConfig signingConfigs.lxhRelease
-          \1} else {
-          \1    signingConfig signingConfigs.debug
-          \1}"""
-          text, count = re.subn(pattern, replacement, text, count=1)
-          if count != 1:
-              raise SystemExit("Could not locate the generated debug signing line.")
-          gradle.write_text(text, encoding="utf-8")
+              """
+              gradle.write_text(text, encoding="utf-8")
           PY
 
       - name: Get Dependencies
