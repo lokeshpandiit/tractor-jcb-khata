@@ -323,8 +323,11 @@ class GoogleSheetsSyncService {
       final id = _string(driver['id']);
       final name = _string(driver['name'], fallback: 'Unnamed Driver');
       final events = <_LedgerEvent>[];
-      for (final log in workLogs.where((log) =>
-        _string(log['driverName']).trim().toLowerCase() == name.trim().toLowerCase())) {
+      for (final log in workLogs.where((log) {
+        final workDriverId = _string(log['driverId']);
+        if (workDriverId.isNotEmpty && id.isNotEmpty) return workDriverId == id;
+        return _string(log['driverName']).trim().toLowerCase() == name.trim().toLowerCase();
+      })) {
         events.add(_LedgerEvent(
           date: _parseDate(_string(log['date'])), priority: 0,
           data: log, kind: 'Work Assignment',
@@ -458,7 +461,7 @@ class GoogleSheetsSyncService {
     final safeName = name.replaceAll(RegExp(r'[\[\]:*?/\\]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ').trim();
     final encoded = base64Url.encode(utf8.encode(id.isEmpty ? name : id)).replaceAll('=', '');
-    final suffix = encoded.isEmpty ? 'NO-ID' : encoded.substring(0, min(7, encoded.length));
+    final suffix = encoded.isEmpty ? 'NO-ID' : encoded.substring(max(0, encoded.length - 7));
     final maxNameLength = 96 - prefix.length - suffix.length - 5;
     final namePart = safeName.isEmpty ? 'Unnamed' : safeName.substring(0, min(safeName.length, maxNameLength));
     return '$prefix - $namePart - $suffix';
