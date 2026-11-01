@@ -53,6 +53,52 @@ void main() {
     );
   });
 
+
+  test('every encryption creates a fresh salt and nonce', () async {
+    final payload = <String, dynamic>{
+      'data': <String, dynamic>{'cash_data': 'sensitive-records'},
+    };
+
+    final first = await BackupEncryptionService.encrypt(payload, password: password);
+    final second = await BackupEncryptionService.encrypt(payload, password: password);
+
+    expect(first['salt'], isNot(second['salt']));
+    expect(first['nonce'], isNot(second['nonce']));
+    expect(
+      await BackupEncryptionService.decrypt(first, password: password),
+      payload,
+    );
+    expect(
+      await BackupEncryptionService.decrypt(second, password: password),
+      payload,
+    );
+  });
+
+  test('tampered ciphertext is rejected', () async {
+    final encrypted = await BackupEncryptionService.encrypt(
+      <String, dynamic>{'data': <String, dynamic>{'cash_data': 'private'}},
+      password: password,
+    );
+
+    final tampered = Map<String, dynamic>.from(encrypted);
+    final cipherBytes = base64Decode(tampered['cipherText'] as String);
+    cipherBytes[0] = cipherBytes[0] ^ 1;
+    tampered['cipherText'] = base64Encode(cipherBytes);
+
+    await expectLater(
+      BackupEncryptionService.decrypt(tampered, password: password),
+      throwsA(isA<BackupPasswordInvalidException>()),
+    );
+  });
+
+  test('legacy plaintext backup is detected for backward-compatible restore', () {
+    final legacyBackup = <String, dynamic>{
+      'accountEmail': 'test@example.com',
+      'data': <String, dynamic>{'cash_data': 'legacy-json'},
+    };
+    expect(BackupEncryptionService.isEncryptedEnvelope(legacyBackup), isFalse);
+  });
+
   test('account backup password storage keys are isolated by email', () {
     expect(
       backupPasswordStorageKey('one@example.com'),
