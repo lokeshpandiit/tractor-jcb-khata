@@ -389,6 +389,12 @@ void lxhDailyBackupDispatcher() {
           spreadsheetId: prefs.getString(
             prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
           ),
+          onSpreadsheetIdCreated: (id) async {
+            await prefs.setString(
+              prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
+              id,
+            );
+          },
         );
         await prefs.setString(
           prefix + GoogleSheetsSyncService.spreadsheetIdPreferenceKey,
