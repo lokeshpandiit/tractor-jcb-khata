@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:cryptography_flutter/cryptography_flutter.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -302,7 +301,6 @@ class GoogleDriveBackupService {
 @pragma('vm:entry-point')
 void lxhDailyBackupDispatcher() {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterCryptography.enable();
   Workmanager().executeTask((taskName, inputData) async {
     if (taskName != _backupTaskName || !GoogleDriveBackupService.isConfigured) {
       return true;
