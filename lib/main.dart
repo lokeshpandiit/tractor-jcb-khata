@@ -204,7 +204,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
 
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
-    _currentIndex = (prefs.getInt('lxh_current_tab_index') ?? 0).clamp(0, 4);
+    final savedTabIndex = prefs.getInt('lxh_current_tab_index') ?? 0;
+    final workRecordsTabMigrationDone =
+        prefs.getBool('lxh_work_records_tab_migration_done') ?? false;
+    if (!workRecordsTabMigrationDone) {
+      _currentIndex = (savedTabIndex >= 3 ? savedTabIndex + 1 : savedTabIndex).clamp(0, 5);
+      await prefs.setBool('lxh_work_records_tab_migration_done', true);
+      if (savedTabIndex >= 3) {
+        await prefs.setInt('lxh_current_tab_index', _currentIndex);
+      }
+    } else {
+      _currentIndex = savedTabIndex.clamp(0, 5);
+    }
 
     final vehiclesString = prefs.getString('vehicles_data');
     if (vehiclesString != null) {
@@ -1093,6 +1104,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
       _buildFleetTab('Machine'),
       _buildPeopleTab('Worker'),
       _buildPeopleTab('Client'),
+      _buildWorkLogsSection(),
       _buildCashTab(),
       _buildTransactionsTab(),
     ];
@@ -1122,32 +1134,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
           NavigationDestination(icon: Icon(Icons.agriculture), label: 'Machine'),
           NavigationDestination(icon: Icon(Icons.engineering), label: 'Worker'),
           NavigationDestination(icon: Icon(Icons.groups), label: 'Parties'),
+          NavigationDestination(icon: Icon(Icons.history), label: 'Work Records'),
           NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: 'Khata'),
           NavigationDestination(icon: Icon(Icons.swap_vert_circle), label: 'Transactions'),
         ],
-      ),
-    );
-  }
-
-  void _openWorkRecordsPage() {
-    Navigator.push(
-      context,
-      MaterialPageRoute<void>(
-        builder: (pageContext) => StatefulBuilder(
-          builder: (pageContext, refreshPage) => Scaffold(
-            appBar: AppBar(
-              title: const Text('Work Records'),
-              backgroundColor: const Color(0xFFE65100),
-              foregroundColor: Colors.white,
-            ),
-            body: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                _buildWorkLogsSection(refreshPage: () => refreshPage(() {})),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -1167,16 +1157,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
           label: const Text('New Work Entry'),
           style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 13), foregroundColor: const Color(0xFFE65100), side: const BorderSide(color: Color(0xFFE65100))),
         )),
-        const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: _openWorkRecordsPage,
-            icon: const Icon(Icons.history),
-            label: Text('Work Records (${logs.length})'),
-            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
-          ),
-        ),
         const SizedBox(height: 12),
         ...vehicles.map((v) => Card(child: ListTile(
           leading: CircleAvatar(
