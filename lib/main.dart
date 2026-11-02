@@ -243,7 +243,22 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
 
     final ledgerString = prefs.getString('ledger_entries_data');
-    if (ledgerString != null) { final List decoded = jsonDecode(ledgerString); ledgerEntries = decoded.map((e) => LedgerEntry.fromJson(e)).toList(); }
+    if (ledgerString != null) {
+      final List decoded = jsonDecode(ledgerString);
+      ledgerEntries = decoded.map((e) => LedgerEntry.fromJson(e)).toList();
+      // Older versions incorrectly treated diesel paid to a driver as money
+      // paid to the driver personally. Remove those entries from Driver Khata;
+      // the expense and cash-out records remain intact.
+      final beforeCleanup = ledgerEntries.length;
+      ledgerEntries.removeWhere((e) =>
+          e.kind == 'driverPayment' &&
+          e.title.toLowerCase().contains('diesel') &&
+          e.title.toLowerCase().contains('paid for driver'));
+      if (ledgerEntries.length != beforeCleanup) {
+        await prefs.setString('ledger_entries_data',
+            jsonEncode(ledgerEntries.map((e) => e.toJson()).toList()));
+      }
+    }
     if (mounted) setState(() => _tabReady = true);
     _maybeShowDailyBackupPrompt();
   }
@@ -1329,21 +1344,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   interest: interestValue,
                   date: entryDate,
                 ));
-                if (!loan && vendor.isNotEmpty) {
-                  final driver = workers.where(
-                    (worker) => worker.name.trim().toLowerCase() == vendor.toLowerCase(),
-                  ).firstOrNull;
-                  if (driver != null) {
-                    ledgerEntries.insert(0, LedgerEntry(
-                      id: DateTime.now().microsecondsSinceEpoch.toString(),
-                      kind: 'driverPayment',
-                      personName: driver.name,
-                      title: '$entryTitle paid for driver',
-                      amount: value,
-                      date: entryDate,
-                    ));
-                  }
-                }
                 _recordCashMovement(
                   title: loan ? 'Loan Given' : entryTitle,
                   amount: value,
