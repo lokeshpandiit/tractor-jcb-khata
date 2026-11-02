@@ -48,6 +48,7 @@ jobs:
           # Fix App Label in AndroidManifest.xml
           sed -i 's/android:label="[^"]*"/android:label="LxH ONE"/g' android/app/src/main/AndroidManifest.xml
 
+      # Stable signing uses the repository secrets configured by the app owner.
       - name: Configure stable release signing when repository secrets are present
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
