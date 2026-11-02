@@ -564,8 +564,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   void _openWorkEntryModal(String vehicleType) {
-    if (vehicles.isEmpty || workers.isEmpty || clients.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pehle machine, driver aur client add karein.')));
+    final missing = <String>[];
+    if (vehicles.isEmpty) missing.add('machine');
+    if (workers.isEmpty) missing.add('driver');
+    if (clients.isEmpty) missing.add('party');
+    if (missing.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Work Entry se pehle ${missing.join(', ')} add karein.')),
+      );
       return;
     }
     showModalBottomSheet(context: context, isScrollControlled: true, builder: (_) => WorkEntrySheet(
@@ -932,11 +938,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Future<void> _pickLogsDate() async {
+    final today = DateTime.now();
+    final monthStart = DateTime(selectedLogsMonth.year, selectedLogsMonth.month);
+    final safeInitialDate = selectedFilterDate ??
+        (monthStart.isAfter(DateTime(today.year, today.month, today.day)) ? today : monthStart);
     final picked = await showDatePicker(
       context: context,
-      initialDate: selectedFilterDate ?? selectedLogsMonth,
+      initialDate: safeInitialDate,
       firstDate: DateTime(2000),
-      lastDate: DateTime.now(),
+      lastDate: today,
     );
     if (picked == null || !mounted) return;
     setState(() {
@@ -985,7 +995,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ),
             IconButton(
               tooltip: 'Next month',
-              onPressed: () => _changeLogsMonth(1),
+              onPressed: selectedLogsMonth.year == DateTime.now().year &&
+                      selectedLogsMonth.month == DateTime.now().month
+                  ? null
+                  : () => _changeLogsMonth(1),
               icon: const Icon(Icons.chevron_right),
             ),
             IconButton(
