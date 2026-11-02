@@ -1460,9 +1460,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         ...cashBook.map((entry) {
           final credit = entry.type.toLowerCase() == 'cash in';
           final color = credit ? Colors.green : Colors.red;
-          final displayName = entry.partyName.trim().isNotEmpty
+          // For debit expenses, show the expense itself as the main label.
+          // partyName is only the person who collected/paid for it, not a debtor.
+          final displayName = credit && entry.partyName.trim().isNotEmpty
               ? entry.partyName.trim()
               : entry.title;
+          final detail = !credit && entry.partyName.trim().isNotEmpty
+              ? '${entry.date} • Debit • Driver: ${entry.partyName.trim()}'
+              : '${entry.date} • ${credit ? "Credit" : "Debit"}';
           return Card(
             margin: const EdgeInsets.symmetric(vertical: 4),
             child: ListTile(
@@ -1471,7 +1476,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 child: Icon(credit ? Icons.call_received : Icons.call_made, color: color),
               ),
               title: Text(displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text('${entry.date} • ${entry.partyName.trim().isEmpty ? (credit ? "Credit" : "Debit") : entry.title}'),
+              subtitle: Text(detail),
               trailing: Text(
                 '${credit ? "+" : "-"}₹${entry.amount.toStringAsFixed(0)}',
                 style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 15),
