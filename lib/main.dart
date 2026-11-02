@@ -645,7 +645,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       if (!mounted || picked == null) return;
 
       final name = (picked['name'] ?? '').toString().trim();
-      final phone = (picked['phone'] ?? '').toString().replaceAll(RegExp(r'\\D'), '');
+      final phone = (picked['phone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
       if (name.isEmpty || phone.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Selected contact has no name or phone number.')),
