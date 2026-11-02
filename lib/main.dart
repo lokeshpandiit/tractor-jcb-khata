@@ -691,16 +691,38 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     return digits;
   }
 
-  String _workSlipMessage(WorkLog log) {
-    return 'TRACTOR / JCB WORK SLIP\n'
-        'Party: ${log.clientName}\n'
-        'Date: ${log.date}\n'
-        'Machine: ${log.vehicleName} (${log.vehicleType})\n'
-        'Driver: ${log.driverName}\n'
-        'Working Hours: ${log.hours}\n'
-        'Rate: ₹${log.rate.toStringAsFixed(0)} per hour\n'
-        'Total Bill: ₹${log.totalAmount.toStringAsFixed(0)}\n'
-        '- LxH ONE';
+  String _workSlipDefaultTemplate() =>
+      'TRACTOR / JCB WORK SLIP\n'
+      'Party: {name}\n'
+      'Date: {date}\n'
+      'Machine: {machine} ({type})\n'
+      'Driver: {driver}\n'
+      'Working Hours: {hours}\n'
+      'Rate: ₹{rate} per hour\n'
+      'Total Bill: ₹{total}\n'
+      '- LxH ONE';
+
+  String _applyMessageFields(String template, Map<String, String> fields) {
+    var message = template;
+    fields.forEach((key, value) {
+      message = message.replaceAll('{$key}', value);
+    });
+    return message;
+  }
+
+  Future<String> _workSlipMessage(WorkLog log) async {
+    final prefs = await SharedPreferences.getInstance();
+    final template = prefs.getString('message_template_work_slip') ?? _workSlipDefaultTemplate();
+    return _applyMessageFields(template, {
+      'name': log.clientName,
+      'date': log.date,
+      'machine': log.vehicleName,
+      'type': log.vehicleType,
+      'driver': log.driverName,
+      'hours': log.hours.toString(),
+      'rate': log.rate.toStringAsFixed(0),
+      'total': log.totalAmount.toStringAsFixed(0),
+    });
   }
 
   Future<void> _sendWhatsApp(WorkLog log) async {
@@ -711,7 +733,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       );
       return;
     }
-    final uri = Uri.https('wa.me', '/$phone', {'text': _workSlipMessage(log)});
+    final message = await _workSlipMessage(log);
+    final uri = Uri.https('wa.me', '/$phone', {'text': message});
     try {
       final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!opened && mounted) {
@@ -737,7 +760,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final uri = Uri(
       scheme: 'sms',
       path: '+$phone',
-      queryParameters: {'body': _workSlipMessage(log)},
+      queryParameters: {'body': await _workSlipMessage(log)},
     );
     try {
       final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -809,6 +832,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     return Scaffold(
       appBar: AppBar(
         actions: [
+          IconButton(tooltip: 'Default Message Settings', icon: const Icon(Icons.message, color: Colors.white), onPressed: _editMessageTemplates),
           IconButton(tooltip: 'Restore from Google Drive', icon: const Icon(Icons.cloud_download, color: Colors.white), onPressed: _restoreFromGoogleDrive),
           IconButton(tooltip: 'Backup to Google Drive', icon: const Icon(Icons.cloud_upload, color: Colors.white), onPressed: _backupToGoogleDrive),
         ],
@@ -1035,27 +1059,105 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     },child:const Text('Save'))]));
   }
 
-  void _sendLedgerSMS(Person p, bool driver) async {
-    final total = driver ? _earned(p) : _bill(p);
-    final paid = driver ? _advance(p) + _driverPaid(p) : _received(p);
-    final due = total - paid;
-    final message = driver
-        ? 'Namaste ${p.name}, Total earning: ₹${total.toStringAsFixed(0)}, Advance: ₹${_advance(p).toStringAsFixed(0)}, Payment given: ₹${_driverPaid(p).toStringAsFixed(0)}, Remaining payable: ₹${due.toStringAsFixed(0)}. - LxH ONE'
-        : 'Namaste ${p.name}, Total bill: ₹${total.toStringAsFixed(0)}, Payment received: ₹${paid.toStringAsFixed(0)}, Remaining due: ₹${due.toStringAsFixed(0)}. - LxH ONE';
+  Future<void> _sendLedgerSMS(Person p, bool driver) async {
+    final message = await _ledgerMessage(p, driver);
     final phone = p.phone.replaceAll(RegExp(r'\D'), '');
-    if (phone.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Phone number available nahi hai.'))); return; }
+    if (phone.isEmpty) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Phone number available nahi hai.')));
+      return;
+    }
     final uri = Uri(scheme: 'sms', path: phone, queryParameters: {'body': message});
-    try { await launchUrl(uri, mode: LaunchMode.externalApplication); }
-    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('SMS app open nahi hua: $e'))); }
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('SMS app open nahi hua: $e')));
+    }
   }
 
-  void _sendLedgerWhatsApp(Person p,bool driver) async {
-    final total=driver?_earned(p):_bill(p),paid=driver?_advance(p)+_driverPaid(p):_received(p),due=total-paid;
-    final message=driver?'Namaste ${p.name},\nTotal earning: ₹${total.toStringAsFixed(0)}\nAdvance: ₹${_advance(p).toStringAsFixed(0)}\nPayment given: ₹${_driverPaid(p).toStringAsFixed(0)}\nRemaining payable: ₹${due.toStringAsFixed(0)}':'Namaste ${p.name},\nTotal bill: ₹${total.toStringAsFixed(0)}\nPayment received: ₹${paid.toStringAsFixed(0)}\nRemaining due: ₹${due.toStringAsFixed(0)}';
-    final phone=p.phone.replaceAll(RegExp(r'\D'),'');
-    final normalizedPhone=phone.startsWith('91')?phone:'91$phone';
-    final uri=Uri.https('wa.me','/$normalizedPhone',{'text':message});
-    await launchUrl(uri,mode:LaunchMode.externalApplication);
+  Future<void> _sendLedgerWhatsApp(Person p, bool driver) async {
+    final message = await _ledgerMessage(p, driver);
+    final phone = p.phone.replaceAll(RegExp(r'\D'), '');
+    if (phone.isEmpty) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Phone number available nahi hai.')));
+      return;
+    }
+    final normalizedPhone = phone.startsWith('91') ? phone : '91$phone';
+    final uri = Uri.https('wa.me', '/$normalizedPhone', {'text': message});
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('WhatsApp could not be opened.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('WhatsApp open nahi hua: $e')));
+    }
+  }
+
+  Future<void> _editMessageTemplates() async {
+    final prefs = await SharedPreferences.getInstance();
+    final workSlip = TextEditingController(text: prefs.getString('message_template_work_slip') ?? _workSlipDefaultTemplate());
+    final party = TextEditingController(text: prefs.getString('message_template_party_ledger') ?? 'Namaste {name},\nTotal Bill: ₹{total}\nPayment Received: ₹{received}\nRemaining Due: ₹{due}\n- LxH ONE');
+    final driver = TextEditingController(text: prefs.getString('message_template_driver_ledger') ?? 'Namaste {name},\nTotal Earning: ₹{total}\nAdvance: ₹{advance}\nPayment Given: ₹{paid}\nRemaining Payable: ₹{due}\n- LxH ONE');
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Default Message Settings'),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Work Slip (WhatsApp / SMS)', style: TextStyle(fontWeight: FontWeight.bold)),
+              TextField(controller: workSlip, minLines: 5, maxLines: 9, decoration: const InputDecoration(border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              const Text('Party Khata Message', style: TextStyle(fontWeight: FontWeight.bold)),
+              TextField(controller: party, minLines: 4, maxLines: 7, decoration: const InputDecoration(border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              const Text('Driver Khata Message', style: TextStyle(fontWeight: FontWeight.bold)),
+              TextField(controller: driver, minLines: 4, maxLines: 7, decoration: const InputDecoration(border: OutlineInputBorder())),
+              const SizedBox(height: 8),
+              const Text('Fields: {name}, {date}, {machine}, {type}, {driver}, {hours}, {rate}, {total}, {received}, {due}, {advance}, {paid}', style: TextStyle(fontSize: 11, color: Colors.black54)),
+            ]),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () {
+            workSlip.text = _workSlipDefaultTemplate();
+            party.text = 'Namaste {name},\nTotal Bill: ₹{total}\nPayment Received: ₹{received}\nRemaining Due: ₹{due}\n- LxH ONE';
+            driver.text = 'Namaste {name},\nTotal Earning: ₹{total}\nAdvance: ₹{advance}\nPayment Given: ₹{paid}\nRemaining Payable: ₹{due}\n- LxH ONE';
+          }, child: const Text('Reset Defaults')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () async {
+            await prefs.setString('message_template_work_slip', workSlip.text.trim().isEmpty ? _workSlipDefaultTemplate() : workSlip.text);
+            await prefs.setString('message_template_party_ledger', party.text.trim());
+            await prefs.setString('message_template_driver_ledger', driver.text.trim());
+            if (ctx.mounted) Navigator.pop(ctx);
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Default messages saved.')));
+          }, child: const Text('Save Messages')),
+        ],
+      ),
+    );
+    workSlip.dispose();
+    party.dispose();
+    driver.dispose();
+  }
+
+  Future<String> _ledgerMessage(Person p, bool driver) async {
+    final prefs = await SharedPreferences.getInstance();
+    final total = driver ? _earned(p) : _bill(p);
+    final received = driver ? 0.0 : _received(p);
+    final advance = driver ? _advance(p) : 0.0;
+    final paid = driver ? _driverPaid(p) : 0.0;
+    final due = driver ? _driverDue(p) : _clientDue(p);
+    final key = driver ? 'message_template_driver_ledger' : 'message_template_party_ledger';
+    final fallback = driver
+        ? 'Namaste {name},\nTotal Earning: ₹{total}\nAdvance: ₹{advance}\nPayment Given: ₹{paid}\nRemaining Payable: ₹{due}\n- LxH ONE'
+        : 'Namaste {name},\nTotal Bill: ₹{total}\nPayment Received: ₹{received}\nRemaining Due: ₹{due}\n- LxH ONE';
+    return _applyMessageFields(prefs.getString(key) ?? fallback, {
+      'name': p.name,
+      'total': total.toStringAsFixed(0),
+      'received': received.toStringAsFixed(0),
+      'advance': advance.toStringAsFixed(0),
+      'paid': paid.toStringAsFixed(0),
+      'due': due.toStringAsFixed(0),
+    });
   }
 
 
