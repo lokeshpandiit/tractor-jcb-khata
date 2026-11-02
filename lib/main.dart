@@ -838,6 +838,195 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
+  List<WorkLog> _workHistoryFor(Person person, bool driver) {
+    final entries = logs
+        .where((log) => driver
+            ? log.driverName == person.name
+            : log.clientName == person.name)
+        .toList();
+    entries.sort((a, b) {
+      final aDate = _parseWorkLogDate(a.date);
+      final bDate = _parseWorkLogDate(b.date);
+      if (aDate == null || bDate == null) return 0;
+      return bDate.compareTo(aDate);
+    });
+    return entries;
+  }
+
+  Widget _recentWorkHistorySection(Person person, bool driver) {
+    final entries = _workHistoryFor(person, driver);
+    final recentEntries = entries.take(3).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          driver ? 'Recent Work History (Assigned Jobs)' : 'Recent Work History',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        if (recentEntries.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Text('Abhi koi work entry nahi hai.'),
+          ),
+        ...recentEntries.map(driver ? _driverWorkHistoryTile : _clientWorkSlipTile),
+        if (entries.length > 3)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => _showAllWorkHistory(person, driver),
+              icon: const Icon(Icons.history),
+              label: Text('View All (${entries.length})'),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _showAllWorkHistory(Person person, bool driver) {
+    final entries = _workHistoryFor(person, driver);
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        child: SizedBox(
+          width: 560,
+          height: MediaQuery.of(dialogContext).size.height * 0.76,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '${person.name} • All Work History',
+                  style: Theme.of(dialogContext).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                Text('${entries.length} work entries'),
+                const Divider(),
+                Expanded(
+                  child: entries.isEmpty
+                      ? const Center(child: Text('Abhi koi work entry nahi hai.'))
+                      : ListView.separated(
+                          itemCount: entries.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (_, index) => driver
+                              ? _driverWorkHistoryTile(entries[index])
+                              : _clientWorkSlipTile(entries[index]),
+                        ),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Close'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<LedgerEntry> _sortedLedgerHistory(List<LedgerEntry> source) {
+    final entries = source.toList();
+    entries.sort((a, b) {
+      DateTime? parse(String value) {
+        try {
+          return DateFormat('dd MMM yyyy').parseStrict(value);
+        } catch (_) {
+          return null;
+        }
+      }
+      final aDate = parse(a.date);
+      final bDate = parse(b.date);
+      if (aDate == null || bDate == null) return 0;
+      return bDate.compareTo(aDate);
+    });
+    return entries;
+  }
+
+  Widget _recentLedgerHistorySection(String title, List<LedgerEntry> source) {
+    final entries = _sortedLedgerHistory(source);
+    final recentEntries = entries.take(3).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        if (recentEntries.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Text('Abhi koi entry nahi hai.'),
+          ),
+        ...recentEntries.map((entry) => ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(entry.title),
+          subtitle: Text(entry.date),
+          trailing: Text('₹${entry.amount.toStringAsFixed(0)}'),
+        )),
+        if (entries.length > 3)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => _showAllLedgerHistory(title, entries),
+              icon: const Icon(Icons.history),
+              label: Text('View All (${entries.length})'),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _showAllLedgerHistory(String title, List<LedgerEntry> source) {
+    final entries = _sortedLedgerHistory(source);
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        child: SizedBox(
+          width: 520,
+          height: MediaQuery.of(dialogContext).size.height * 0.72,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(title.replaceFirst('Recent ', '') + ' • All',
+                    style: Theme.of(dialogContext).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text('${entries.length} entries'),
+                const Divider(),
+                Expanded(
+                  child: entries.isEmpty
+                      ? const Center(child: Text('Abhi koi entry nahi hai.'))
+                      : ListView.separated(
+                          itemCount: entries.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (_, index) {
+                            final entry = entries[index];
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(entry.title),
+                              subtitle: Text(entry.date),
+                              trailing: Text('₹${entry.amount.toStringAsFixed(0)}'),
+                            );
+                          },
+                        ),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Close'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _driveBackupDebounce?.cancel();
@@ -1165,22 +1354,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       content:SizedBox(width:420,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,mainAxisSize:MainAxisSize.min,children:[
         if(driver)...[
           _ledgerLine('Total Earning (Manual)',_earned(p)),_ledgerLine('Advance Given',_advance(p)),_ledgerLine('Other Payment Given',_driverPaid(p)),_ledgerLine('Remaining Payable',_driverDue(p)),
-          const Divider(),const Text('Earning / Payment History',style:TextStyle(fontWeight:FontWeight.bold)),
-          ...ledgerEntries.where((e)=>e.personName==p.name&&e.kind.startsWith('driver')).map((e)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹${e.amount.toStringAsFixed(0)}'))),
           const Divider(),
-          const Text('Work History (Assigned Jobs)',style:TextStyle(fontWeight:FontWeight.bold)),
-          ...logs.where((l)=>l.driverName==p.name).map(_driverWorkHistoryTile),
-          if (logs.every((l)=>l.driverName!=p.name))
-            const Padding(padding:EdgeInsets.symmetric(vertical:8),child:Text('Abhi koi work entry assign nahi hai.')),
+          _recentLedgerHistorySection(
+            'Recent Earning / Payment History',
+            ledgerEntries.where((e)=>e.personName==p.name&&e.kind.startsWith('driver')).toList(),
+          ),
+          const Divider(),
+          _recentWorkHistorySection(p, true),
           OutlinedButton(onPressed:()async{await _addPersonEntry('driverEarning',p);refresh((){});},child:const Text('Add Earning')),
           OutlinedButton(onPressed:()async{await _addPersonEntry('driverAdvance',p);refresh((){});},child:const Text('Add Advance')),
           OutlinedButton(onPressed:()async{await _addPersonEntry('driverPayment',p);refresh((){});},child:const Text('Add Payment Given')),
         ]else...[
           _ledgerLine('Total Bill',_bill(p)),_ledgerLine('Payment Received',_received(p)),_ledgerLine('Remaining Due',_clientDue(p)),
-          const Divider(),const Text('Work History',style:TextStyle(fontWeight:FontWeight.bold)),
-          ...logs.where((l)=>l.clientName==p.name).map(_clientWorkSlipTile),
-          const Divider(),const Text('Payment History',style:TextStyle(fontWeight:FontWeight.bold)),
-          ...ledgerEntries.where((e)=>e.kind=='clientPayment'&&e.personName==p.name).map((e)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(e.title),subtitle:Text(e.date),trailing:Text('₹${e.amount.toStringAsFixed(0)}'))),
+          const Divider(),
+          _recentWorkHistorySection(p, false),
+          const Divider(),
+          _recentLedgerHistorySection(
+            'Recent Payment History',
+            ledgerEntries.where((e)=>e.kind=='clientPayment'&&e.personName==p.name).toList(),
+          ),
           OutlinedButton(onPressed:()async{await _addPersonEntry('clientPayment',p);refresh((){});},child:const Text('Add Payment Received')),
           OutlinedButton(onPressed:()async{p.active=!p.active;await _saveData();setState((){});refresh((){});},child:Text(p.active?'Mark Completed':'Mark Active')),
         ],
