@@ -336,8 +336,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Future<void> _backupToGoogleDrive() async {
-    try { final account = await _googleSignIn.signIn(); if (account == null) return; await _uploadDailyDriveBackup(account); }
-    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Google Drive backup failed: $e'))); }
+    try {
+      final account = await _googleSignIn.signIn();
+      if (account == null) return;
+      await _uploadDailyDriveBackup(account);
+    } catch (e) {
+      if (!mounted) return;
+      final details = e.toString();
+      final lower = details.toLowerCase();
+      final message = (lower.contains('developer_error') ||
+              lower.contains('apiexception: 10') ||
+              lower.contains('clientconfigurationerror'))
+          ? 'Google Sign-In SHA-1 / package configuration match nahi kar raha. Stable signing key ko Google Cloud Android OAuth client mein register karein.'
+          : 'Google Drive backup failed: $details';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), duration: const Duration(seconds: 7)),
+      );
+    }
   }
 
   Future<void> _restoreFromGoogleDrive() async {
