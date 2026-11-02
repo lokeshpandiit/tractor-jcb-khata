@@ -29,7 +29,11 @@ jobs:
         run: |
           rm -rf android
           flutter create . --platforms android --project-name tractor_jcb_khata
-          
+
+          # Restore the native contact-picker bridge after generating Android files.
+          mkdir -p android/app/src/main/kotlin/com/example/tractor_jcb_khata
+          cp tool/android/MainActivity.kt android/app/src/main/kotlin/com/example/tractor_jcb_khata/MainActivity.kt
+
           # Force Kotlin version to 1.9.24 in settings.gradle
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/g' android/settings.gradle
           sed -i 's/id "com.android.application" version ".*"/id "com.android.application" version "8.6.1"/g' android/settings.gradle
@@ -37,11 +41,65 @@ jobs:
           sed -i 's/gradle-[0-9.]*-bin.zip/gradle-8.7-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
 
           # Meet Android plugin requirements for SDK and NDK versions.
-          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 35/' android/app/build.gradle
-          sed -i 's/ndkVersion flutter.ndkVersion/ndkVersion "26.1.10909125"/' android/app/build.gradle
+          # Flutter 3.24 templates use the newer "compileSdk =" and "ndkVersion =" syntax.
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/' android/app/build.gradle
+          sed -i 's/ndkVersion = flutter.ndkVersion/ndkVersion = "26.1.10909125"/' android/app/build.gradle
 
           # Fix App Label in AndroidManifest.xml
           sed -i 's/android:label="[^"]*"/android:label="LxH ONE"/g' android/app/src/main/AndroidManifest.xml
+
+      - name: Configure stable release signing when repository secrets are present
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/lxh-one-release.jks
+            cat > android/key.properties <<EOF
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=app/lxh-one-release.jks
+          EOF
+            python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/build.gradle")
+          s = p.read_text()
+          prefix = """def keystoreProperties = new Properties()
+          def keystorePropertiesFile = rootProject.file('key.properties')
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+          }
+
+          """
+          if "def keystorePropertiesFile" not in s:
+              s = s.replace("android {", prefix + "android {", 1)
+          signing = """    signingConfigs {
+                  if (keystorePropertiesFile.exists()) {
+                      release {
+                          keyAlias keystoreProperties['keyAlias']
+                          keyPassword keystoreProperties['keyPassword']
+                          storeFile file(keystoreProperties['storeFile'])
+                          storePassword keystoreProperties['storePassword']
+                      }
+                  }
+              }
+
+          """
+          if "signingConfigs {" not in s:
+              s = s.replace("    buildTypes {", signing + "    buildTypes {", 1)
+          s = s.replace(
+              "signingConfig = signingConfigs.debug",
+              "signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug"
+          )
+          p.write_text(s)
+          PY
+            echo "Stable Android release signing is configured."
+          else
+            echo "::warning::Stable signing secrets are not configured. This APK will use the temporary CI debug key; Google Sign-In will not match a registered SHA-1."
+          fi
 
       - name: Get Dependencies
         run: flutter pub get
@@ -49,8 +107,14 @@ jobs:
       - name: Build Lightweight APK
         run: flutter build apk --release --split-per-abi
 
+      - name: Print APK signing certificate SHA-1
+        run: |
+          keytool -printcert -jarfile build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | tee build/app/outputs/flutter-apk/apk-signing-certificate.txt
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: LxH-ONE-APK
-          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          path: |
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/apk-signing-certificate.txt
