@@ -624,7 +624,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
       context: context,
       builder: (_) => AlertDialog(
         title: Text('Delete $role?'),
-        content: Text('Kya aap "${p.name}" ko list se hatana chahte hain?'),
+        content: Text(
+          'Kya aap "${p.name}" ko list se hatana chahte hain?\n\nIs person ki purani Work Entries aur Ledger history safe rahegi; sirf list se naam remove hoga.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
@@ -896,8 +898,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
     entries.sort((a, b) {
       final aDate = _parseWorkLogDate(a.date);
       final bDate = _parseWorkLogDate(b.date);
-      if (aDate == null || bDate == null) return 0;
-      return bDate.compareTo(aDate);
+      if (aDate == null || bDate == null) return b.id.compareTo(a.id);
+      final dateOrder = bDate.compareTo(aDate);
+      return dateOrder == 0 ? b.id.compareTo(a.id) : dateOrder;
     });
     return entries;
   }
@@ -989,8 +992,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
       }
       final aDate = parse(a.date);
       final bDate = parse(b.date);
-      if (aDate == null || bDate == null) return 0;
-      return bDate.compareTo(aDate);
+      if (aDate == null || bDate == null) return b.id.compareTo(a.id);
+      final dateOrder = bDate.compareTo(aDate);
+      return dateOrder == 0 ? b.id.compareTo(a.id) : dateOrder;
     });
     return entries;
   }
@@ -1549,6 +1553,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
     final workSlip = TextEditingController(text: prefs.getString('message_template_work_slip') ?? _workSlipDefaultTemplate());
     final party = TextEditingController(text: prefs.getString('message_template_party_ledger') ?? 'Namaste {name},\nTotal Bill: ₹{total}\nPayment Received: ₹{received}\nRemaining Due: ₹{due}\n- LxH ONE');
     final driver = TextEditingController(text: prefs.getString('message_template_driver_ledger') ?? 'Namaste {name},\nTotal Earning: ₹{total}\nAdvance: ₹{advance}\nPayment Given: ₹{paid}\nRemaining Payable: ₹{due}\n- LxH ONE');
+    if (!mounted) {
+      workSlip.dispose();
+      party.dispose();
+      driver.dispose();
+      return;
+    }
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1883,7 +1893,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
               ? entry.partyName.trim()
               : entry.title;
           final detail = !credit && entry.partyName.trim().isNotEmpty
-              ? '${entry.date} • Debit • Driver: ${entry.partyName.trim()}'
+              ? '${entry.date} • Debit • Paid To: ${entry.partyName.trim()}'
               : '${entry.date} • ${credit ? "Credit" : "Debit"}';
           return Card(
             margin: const EdgeInsets.symmetric(vertical: 4),
