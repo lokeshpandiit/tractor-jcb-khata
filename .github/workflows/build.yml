@@ -61,7 +61,7 @@ jobs:
           storePassword=$ANDROID_KEYSTORE_PASSWORD
           keyPassword=$ANDROID_KEY_PASSWORD
           keyAlias=$ANDROID_KEY_ALIAS
-          storeFile=app/lxh-one-release.jks
+          storeFile=lxh-one-release.jks
           EOF
             python3 - <<'PY'
           from pathlib import Path
