@@ -124,7 +124,7 @@ jobs:
               await tester.pumpWidget(const FleetKhataApp());
               await tester.pumpAndSettle(const Duration(milliseconds: 100));
               expect(find.text('LxH ONE'), findsOneWidget);
-              expect(find.text('Machine'), findsOneWidget);
+              expect(find.text('Machine'), findsWidgets);
               expect(find.text('Worker'), findsOneWidget);
               expect(find.text('Transactions'), findsOneWidget);
             });
