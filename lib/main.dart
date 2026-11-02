@@ -1217,6 +1217,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               if (value <= 0 || (loan && who.isEmpty)) return;
               final entryTitle = loan ? who : (note.text.trim().isEmpty ? 'Expense' : note.text.trim());
               setState(() {
+                final entryDate = DateFormat('dd MMM yyyy').format(DateTime.now());
                 ledgerEntries.insert(0, LedgerEntry(
                   id: DateTime.now().microsecondsSinceEpoch.toString(),
                   kind: kind,
@@ -1224,8 +1225,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                   title: entryTitle,
                   amount: value,
                   interest: interestValue,
-                  date: DateFormat('dd MMM yyyy').format(DateTime.now()),
+                  date: entryDate,
                 ));
+                if (!loan && vendor.isNotEmpty) {
+                  final driver = workers.where(
+                    (worker) => worker.name.trim().toLowerCase() == vendor.toLowerCase(),
+                  ).firstOrNull;
+                  if (driver != null) {
+                    ledgerEntries.insert(0, LedgerEntry(
+                      id: DateTime.now().microsecondsSinceEpoch.toString(),
+                      kind: 'driverPayment',
+                      personName: driver.name,
+                      title: '$entryTitle paid for driver',
+                      amount: value,
+                      date: entryDate,
+                    ));
+                  }
+                }
                 _recordCashMovement(
                   title: loan ? 'Loan Given' : entryTitle,
                   amount: value,
@@ -1314,11 +1330,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Widget _buildTransactionsTab() {
-    final credits = cashBook.where((e) => e.type.toLowerCase() == 'cash in').toList();
-    final debits = cashBook.where((e) => e.type.toLowerCase() != 'cash in').toList();
-    final creditTotal = credits.fold(0.0, (sum, e) => sum + e.amount);
-    final debitTotal = debits.fold(0.0, (sum, e) => sum + e.amount);
-
+    // cashBook contains only money actually received or paid.
+    // Bills / outstanding balances remain in the relevant Party or Driver ledger.
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -1333,16 +1346,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ],
         ),
         const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(children: [
-              _ledgerLine('Total Credit', creditTotal),
-              _ledgerLine('Total Debit', debitTotal),
-              _ledgerLine('Net Balance', creditTotal - debitTotal),
-            ]),
-          ),
-        ),
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 8),
           child: Text('Credit = Green • Debit = Red', style: TextStyle(fontSize: 12, color: Colors.black54)),
