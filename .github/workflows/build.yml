@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, feature/google-drive-backup ]
   workflow_dispatch:
 
 jobs:
@@ -29,21 +29,125 @@ jobs:
         run: |
           rm -rf android
           flutter create . --platforms android --project-name tractor_jcb_khata
-          
+
+          # Android is generated cleanly in CI. App-specific Android files are
+          # kept in tool/android and copied back after generation, so CI settings
+          # do not depend on edits to the temporary android/ directory.
+          mkdir -p android/app/src/main/kotlin/com/example/tractor_jcb_khata
+          cp tool/android/MainActivity.kt android/app/src/main/kotlin/com/example/tractor_jcb_khata/MainActivity.kt
+          cp tool/android/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+
           # Force Kotlin version to 1.9.24 in settings.gradle
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/g' android/settings.gradle
+          sed -i 's/id "com.android.application" version ".*"/id "com.android.application" version "8.6.1"/g' android/settings.gradle
+          sed -i 's/gradle-[0-9.]*-all.zip/gradle-8.7-all.zip/' android/gradle/wrapper/gradle-wrapper.properties
+          sed -i 's/gradle-[0-9.]*-bin.zip/gradle-8.7-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
+
+          # Meet Android plugin requirements for SDK and NDK versions.
+          # Flutter 3.24 templates use the newer "compileSdk =" and "ndkVersion =" syntax.
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/' android/app/build.gradle
+          sed -i 's/ndkVersion = flutter.ndkVersion/ndkVersion = "26.1.10909125"/' android/app/build.gradle
 
           # Fix App Label in AndroidManifest.xml
           sed -i 's/android:label="[^"]*"/android:label="LxH ONE"/g' android/app/src/main/AndroidManifest.xml
 
+      # Stable signing uses the repository secrets configured by the app owner.
+      - name: Configure stable release signing when repository secrets are present
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/lxh-one-release.jks
+            cat > android/key.properties <<EOF
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=lxh-one-release.jks
+          EOF
+            python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/build.gradle")
+          s = p.read_text()
+          prefix = """def keystoreProperties = new Properties()
+          def keystorePropertiesFile = rootProject.file('key.properties')
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+          }
+
+          """
+          if "def keystorePropertiesFile" not in s:
+              s = s.replace("android {", prefix + "android {", 1)
+          signing = """    signingConfigs {
+                  if (keystorePropertiesFile.exists()) {
+                      release {
+                          keyAlias keystoreProperties['keyAlias']
+                          keyPassword keystoreProperties['keyPassword']
+                          storeFile file(keystoreProperties['storeFile'])
+                          storePassword keystoreProperties['storePassword']
+                      }
+                  }
+              }
+
+          """
+          if "signingConfigs {" not in s:
+              s = s.replace("    buildTypes {", signing + "    buildTypes {", 1)
+          s = s.replace(
+              "signingConfig = signingConfigs.debug",
+              "signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug"
+          )
+          p.write_text(s)
+          PY
+            echo "Stable Android release signing is configured."
+          else
+            echo "::warning::Stable signing secrets are not configured. This APK will use the temporary CI debug key; Google Sign-In will not match a registered SHA-1."
+          fi
+
       - name: Get Dependencies
         run: flutter pub get
 
+      - name: Prepare LxH ONE widget smoke test
+        run: |
+          mkdir -p test
+          cat > test/widget_test.dart <<'DART'
+          import 'package:flutter_test/flutter_test.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
+          import 'package:tractor_jcb_khata/main.dart';
+
+          void main() {
+            TestWidgetsFlutterBinding.ensureInitialized();
+
+            testWidgets('LxH ONE main screen renders', (tester) async {
+              SharedPreferences.setMockInitialValues({});
+              await tester.pumpWidget(const FleetKhataApp());
+              await tester.pumpAndSettle(const Duration(milliseconds: 100));
+              expect(find.text('LxH ONE'), findsOneWidget);
+              expect(find.text('Machine'), findsWidgets);
+              expect(find.text('Worker'), findsOneWidget);
+              expect(find.text('Transactions'), findsOneWidget);
+            });
+          }
+          DART
+
+      - name: Analyze Dart code
+        run: flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings
+
+      - name: Run widget smoke test
+        run: flutter test --no-pub
+
       - name: Build Lightweight APK
         run: flutter build apk --release --split-per-abi
+
+      - name: Print APK signing certificate SHA-1
+        run: |
+          keytool -printcert -jarfile build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | tee build/app/outputs/flutter-apk/apk-signing-certificate.txt
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: LxH-ONE-APK
-          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          path: |
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/apk-signing-certificate.txt
