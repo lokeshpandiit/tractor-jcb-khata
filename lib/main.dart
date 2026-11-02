@@ -5,7 +5,6 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -345,6 +344,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       final details = e.toString();
       final lower = details.toLowerCase();
       final message = (lower.contains('developer_error') ||
+              lower.contains('sign_in_failed') ||
+              lower.contains('p0.b: 10') ||
               lower.contains('apiexception: 10') ||
               lower.contains('clientconfigurationerror'))
           ? 'Google Sign-In SHA-1 / package configuration match nahi kar raha. Stable signing key ko Google Cloud Android OAuth client mein register karein.'
@@ -1280,14 +1281,26 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 final value = double.tryParse(amount.text) ?? 0;
                 final title = detail.text.trim();
                 if (value <= 0 || title.isEmpty) return;
+                final transactionDate = DateFormat('dd MMM yyyy').format(DateTime.now());
+                final transactionId = DateTime.now().microsecondsSinceEpoch.toString();
                 setState(() {
                   cashBook.insert(0, CashEntry(
                     title: title,
                     amount: value,
                     type: direction,
-                    date: DateFormat('dd MMM yyyy').format(DateTime.now()),
+                    date: transactionDate,
                     partyName: person.text.trim(),
                   ));
+                  if (direction == 'Cash Out') {
+                    ledgerEntries.insert(0, LedgerEntry(
+                      id: transactionId,
+                      kind: 'expense',
+                      personName: '',
+                      title: title,
+                      amount: value,
+                      date: transactionDate,
+                    ));
+                  }
                 });
                 _saveData();
                 Navigator.pop(ctx);
@@ -1370,44 +1383,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  void _addExpenseDialog() {
-    final titleController = TextEditingController();
-    final amountController = TextEditingController();
 
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Kharcha Add Karein'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: titleController, decoration: const InputDecoration(labelText: 'Detail (eg. Diesel)')),
-            TextField(controller: amountController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Amount (₹)')),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              if (amountController.text.isNotEmpty) {
-                setState(() {
-                  cashBook.insert(0, CashEntry(
-                    title: titleController.text.isEmpty ? 'Kharcha' : titleController.text,
-                    amount: double.tryParse(amountController.text) ?? 0,
-                    type: 'Cash Out',
-                    date: DateFormat('dd MMM yyyy').format(DateTime.now()),
-                  ));
-                });
-                _saveData();
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('Save'),
-          )
-        ],
-      ),
-    );
-  }
 }
 
 class WorkEntrySheet extends StatefulWidget {
