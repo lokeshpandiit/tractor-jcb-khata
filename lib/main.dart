@@ -705,7 +705,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
   Future<void> _savePickedPerson(String role, Map<String, dynamic> picked) async {
     if (!mounted || (role != 'Worker' && role != 'Client')) return;
     final name = (picked['name'] ?? '').toString().trim();
-    final phone = (picked['phone'] ?? '').toString().replaceAll(RegExp(r'\\D'), '');
+    final phone = (picked['phone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
     if (name.isEmpty || phone.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Selected contact has no name or phone number.')),
@@ -715,7 +715,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Widget
 
     final target = role == 'Worker' ? workers : clients;
     if (target.any((person) =>
-        person.phone.replaceAll(RegExp(r'\\D'), '') == phone)) {
+        person.phone.replaceAll(RegExp(r'\D'), '') == phone)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Ye contact pehle se list mein hai.')),
       );
