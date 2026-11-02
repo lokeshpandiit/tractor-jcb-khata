@@ -163,7 +163,7 @@ class MainNavigationScreen extends StatefulWidget {
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
 
-class _MainNavigationScreenState extends State<MainNavigationScreen> {
+class _MainNavigationScreenState extends State<MainNavigationScreen> with WidgetsBindingObserver {
   static const MethodChannel _contactPickerChannel =
       MethodChannel('lxh_one/contact_picker');
 
@@ -173,6 +173,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   DateTime selectedLogsMonth = DateTime(DateTime.now().year, DateTime.now().month);
   Timer? _driveBackupDebounce;
   bool _driveBackupInProgress = false;
+  bool _consumingPendingContact = false;
   int _dataRevision = 0;
 
   List<Vehicle> vehicles = [];
@@ -190,7 +191,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadData();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _tabReady) {
+      _consumePendingContact();
+    }
   }
 
   Future<void> _loadData() async {
@@ -261,6 +270,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       }
     }
     if (mounted) setState(() => _tabReady = true);
+    await _consumePendingContact();
     _maybeShowDailyBackupPrompt();
   }
 
@@ -668,36 +678,17 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   // No broad READ_CONTACTS permission is required for this flow.
   Future<void> _addMultiplePersonsDialog(String role) async {
     try {
-      // Persist the selected tab before handing control to Android's picker.
+      // Persist the selected tab so returning from Android's picker never
+      // navigates the user back to the first tab.
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('lxh_current_tab_index', _currentIndex);
 
-      final picked = await _contactPickerChannel.invokeMapMethod<String, dynamic>('pickPhoneContact');
+      final picked = await _contactPickerChannel.invokeMapMethod<String, dynamic>(
+        'pickPhoneContact',
+        <String, dynamic>{'role': role},
+      );
       if (!mounted || picked == null) return;
-
-      final name = (picked['name'] ?? '').toString().trim();
-      final phone = (picked['phone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
-      if (name.isEmpty || phone.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Selected contact has no name or phone number.')),
-        );
-        return;
-      }
-
-      setState(() {
-        final newPerson = Person(
-          id: DateTime.now().microsecondsSinceEpoch.toString(),
-          name: name,
-          phone: phone,
-          role: role,
-        );
-        if (role == 'Worker') {
-          workers.add(newPerson);
-        } else {
-          clients.add(newPerson);
-        }
-      });
-      await _saveData();
+      await _savePickedPerson(role, picked);
     } on PlatformException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -708,6 +699,59 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not select contact: $e')),
       );
+    }
+  }
+
+  Future<void> _savePickedPerson(String role, Map<String, dynamic> picked) async {
+    if (!mounted || (role != 'Worker' && role != 'Client')) return;
+    final name = (picked['name'] ?? '').toString().trim();
+    final phone = (picked['phone'] ?? '').toString().replaceAll(RegExp(r'\\D'), '');
+    if (name.isEmpty || phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selected contact has no name or phone number.')),
+      );
+      return;
+    }
+
+    final target = role == 'Worker' ? workers : clients;
+    if (target.any((person) =>
+        person.phone.replaceAll(RegExp(r'\\D'), '') == phone)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ye contact pehle se list mein hai.')),
+      );
+      return;
+    }
+
+    setState(() {
+      final newPerson = Person(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        name: name,
+        phone: phone,
+        role: role,
+      );
+      if (role == 'Worker') {
+        workers.add(newPerson);
+      } else {
+        clients.add(newPerson);
+      }
+    });
+    await _saveData();
+  }
+
+  Future<void> _consumePendingContact() async {
+    if (!mounted || !_tabReady || _consumingPendingContact) return;
+    _consumingPendingContact = true;
+    try {
+      final picked = await _contactPickerChannel
+          .invokeMapMethod<String, dynamic>('consumePendingContact');
+      if (!mounted || picked == null) return;
+      final role = (picked['role'] ?? '').toString();
+      await _savePickedPerson(role, picked);
+    } catch (_) {
+      // Nothing to recover on ordinary app resumes. A picked contact is
+      // persisted natively only when Android recreated the activity.
+    } finally {
+      _consumingPendingContact = false;
     }
   }
 
@@ -1034,6 +1078,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _driveBackupDebounce?.cancel();
     super.dispose();
   }
