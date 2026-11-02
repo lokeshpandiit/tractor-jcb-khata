@@ -135,15 +135,27 @@ class CashEntry {
   final double amount;
   final String type;
   final String date;
+  final String partyName;
 
-  CashEntry({required this.title, required this.amount, required this.type, required this.date});
+  CashEntry({
+    required this.title,
+    required this.amount,
+    required this.type,
+    required this.date,
+    this.partyName = '',
+  });
 
-  Map<String, dynamic> toJson() => {'title': title, 'amount': amount, 'type': type, 'date': date};
+  Map<String, dynamic> toJson() => {
+    'title': title, 'amount': amount, 'type': type, 'date': date,
+    'partyName': partyName,
+  };
+
   factory CashEntry.fromJson(Map<String, dynamic> json) => CashEntry(
-    title: json['title'] ?? '',
+    title: (json['title'] ?? '').toString(),
     amount: (json['amount'] ?? 0).toDouble(),
-    type: json['type'] ?? '',
-    date: json['date'] ?? '',
+    type: (json['type'] ?? '').toString(),
+    date: (json['date'] ?? '').toString(),
+    partyName: (json['partyName'] ?? '').toString(),
   );
 }
 
@@ -156,6 +168,7 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
+  bool _tabReady = false;
   DateTime? selectedFilterDate;
   Timer? _driveBackupDebounce;
   bool _driveBackupInProgress = false;
@@ -181,7 +194,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
-    
+    _currentIndex = (prefs.getInt('lxh_current_tab_index') ?? 0).clamp(0, 4);
+
     final vehiclesString = prefs.getString('vehicles_data');
     if (vehiclesString != null) {
       final List decoded = jsonDecode(vehiclesString);
@@ -230,7 +244,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
     final ledgerString = prefs.getString('ledger_entries_data');
     if (ledgerString != null) { final List decoded = jsonDecode(ledgerString); ledgerEntries = decoded.map((e) => LedgerEntry.fromJson(e)).toList(); }
-    if (mounted) setState(() {});
+    if (mounted) setState(() => _tabReady = true);
     _maybeShowDailyBackupPrompt();
   }
 
@@ -605,6 +619,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   // No broad READ_CONTACTS permission is required for this flow.
   Future<void> _addMultiplePersonsDialog(String role) async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('lxh_current_tab_index', _currentIndex);
       final Contact? contact = await FlutterContacts.openExternalPick();
       if (!mounted || contact == null) return;
       final name = contact.displayName.trim();
@@ -761,6 +777,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       _buildPeopleTab('Worker'),
       _buildPeopleTab('Client'),
       _buildCashTab(),
+      _buildTransactionsTab(),
     ];
 
     return Scaffold(
@@ -773,15 +790,22 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         backgroundColor: const Color(0xFFE65100),
         elevation: 2,
       ),
-      body: screens[_currentIndex],
+      body: _tabReady
+          ? screens[_currentIndex]
+          : const Center(child: CircularProgressIndicator()),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (idx) => setState(() => _currentIndex = idx),
+        onDestinationSelected: (idx) async {
+          setState(() => _currentIndex = idx);
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setInt('lxh_current_tab_index', idx);
+        },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.agriculture), label: 'Machine Name'),
           NavigationDestination(icon: Icon(Icons.engineering), label: 'Drivers'),
           NavigationDestination(icon: Icon(Icons.groups), label: 'Parties'),
           NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: 'Khata/Cash'),
+          NavigationDestination(icon: Icon(Icons.swap_vert_circle), label: 'Transactions'),
         ],
       ),
     );
