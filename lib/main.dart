@@ -170,6 +170,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
   bool _tabReady = false;
   DateTime? selectedFilterDate;
+  DateTime selectedLogsMonth = DateTime(DateTime.now().year, DateTime.now().month);
   Timer? _driveBackupDebounce;
   bool _driveBackupInProgress = false;
   int _dataRevision = 0;
@@ -511,6 +512,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         cashBook = restoredCash;
         ledgerEntries = restoredLedger;
         selectedFilterDate = null;
+        selectedLogsMonth = DateTime(DateTime.now().year, DateTime.now().month);
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -636,8 +638,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
             onPressed: () {
               setState(() {
-                logs.removeAt(index);
-                cashBook.removeWhere((c) => c.title == '${log.clientName} (${log.vehicleName})' && c.amount == log.totalAmount && c.date == log.date);
+                logs.removeWhere((existing) => existing.id == log.id);
+                // Work entries are bills/receivables, not cash movements.
+                // Do not remove CashBook rows by matching text, amount and date:
+                // an identical genuine cash transaction may exist independently.
               });
               _saveData();
               Navigator.pop(context);
@@ -905,6 +909,141 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ]),
         ))),
         if (vehicles.isEmpty) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No machines added yet.'))),
+        const SizedBox(height: 20),
+        const Divider(),
+        _buildWorkLogsSection(),
+      ],
+    );
+  }
+
+  DateTime? _parseWorkLogDate(String value) {
+    try {
+      return DateFormat('dd MMM yyyy').parseStrict(value);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _changeLogsMonth(int offset) {
+    setState(() {
+      selectedLogsMonth = DateTime(selectedLogsMonth.year, selectedLogsMonth.month + offset);
+      selectedFilterDate = null;
+    });
+  }
+
+  Future<void> _pickLogsDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedFilterDate ?? selectedLogsMonth,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      selectedFilterDate = DateTime(picked.year, picked.month, picked.day);
+      selectedLogsMonth = DateTime(picked.year, picked.month);
+    });
+  }
+
+  Widget _buildWorkLogsSection() {
+    final monthLogs = logs.where((log) {
+      final date = _parseWorkLogDate(log.date);
+      return date != null &&
+          date.year == selectedLogsMonth.year &&
+          date.month == selectedLogsMonth.month;
+    }).toList();
+    final visibleLogs = selectedFilterDate == null
+        ? monthLogs
+        : monthLogs.where((log) {
+            final date = _parseWorkLogDate(log.date);
+            return date != null &&
+                date.year == selectedFilterDate!.year &&
+                date.month == selectedFilterDate!.month &&
+                date.day == selectedFilterDate!.day;
+          }).toList();
+    final monthlyBilled = monthLogs.fold<double>(0, (sum, log) => sum + log.totalAmount);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('Work Records', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            IconButton(
+              tooltip: 'Previous month',
+              onPressed: () => _changeLogsMonth(-1),
+              icon: const Icon(Icons.chevron_left),
+            ),
+            Expanded(
+              child: Center(
+                child: Text(
+                  DateFormat('MMMM yyyy').format(selectedLogsMonth),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Next month',
+              onPressed: () => _changeLogsMonth(1),
+              icon: const Icon(Icons.chevron_right),
+            ),
+            IconButton(
+              tooltip: 'Filter by date',
+              onPressed: _pickLogsDate,
+              icon: const Icon(Icons.calendar_month),
+            ),
+          ],
+        ),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Expanded(child: Text('Work Billed This Month')),
+                Text(
+                  '₹${monthlyBilled.toStringAsFixed(0)}',
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 17),
+                ),
+                const SizedBox(width: 10),
+                Text('${monthLogs.length} entries'),
+              ],
+            ),
+          ),
+        ),
+        if (selectedFilterDate != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => setState(() => selectedFilterDate = null),
+              icon: const Icon(Icons.filter_alt_off),
+              label: Text('Clear date filter • ${DateFormat('dd MMM yyyy').format(selectedFilterDate!)}'),
+            ),
+          ),
+        if (visibleLogs.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(18),
+            child: Center(child: Text('Is date/month mein koi work entry nahi hai.')),
+          ),
+        ...visibleLogs.map((log) => Card(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          child: ListTile(
+            title: Text('${log.clientName} • ${log.vehicleName}', style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text('${log.date} • Driver: ${log.driverName} • ${log.hours.toStringAsFixed(1)} hrs'),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('₹${log.totalAmount.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                IconButton(
+                  tooltip: 'Delete work record',
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  onPressed: () => _deleteLog(logs.indexWhere((item) => item.id == log.id), log),
+                ),
+              ],
+            ),
+          ),
+        )),
       ],
     );
   }
@@ -1567,7 +1706,26 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text('New ${widget.vehicleType} Entry', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 14),
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.calendar_month, color: Color(0xFFE65100)),
+              title: const Text('Work Date'),
+              subtitle: Text(DateFormat('dd MMM yyyy').format(selectedDate)),
+              trailing: const Icon(Icons.edit_calendar),
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: selectedDate,
+                  firstDate: DateTime(2000),
+                  lastDate: DateTime.now(),
+                );
+                if (picked != null && mounted) {
+                  setState(() => selectedDate = DateTime(picked.year, picked.month, picked.day));
+                }
+              },
+            ),
+            const SizedBox(height: 6),
             DropdownButtonFormField<Vehicle>(
               value: selectedVehicle,
               decoration: const InputDecoration(labelText: 'Select Machine'),
@@ -1624,22 +1782,37 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
               onPressed: () {
-                if (machineNameCtrl.text.isNotEmpty && selectedWorker != null && selectedClient != null && calculatedTotal > 0) {
-                  final log = WorkLog(
-                    id: DateTime.now().toString(),
-                    date: DateFormat('dd MMM yyyy').format(selectedDate),
-                    vehicleName: selectedVehicle!.name,
-                    vehicleType: selectedVehicle!.type,
-                    driverName: selectedWorker!.name,
-                    clientName: selectedClient!.name,
-                    clientPhone: selectedClient!.phone,
-                    hours: double.tryParse(hoursCtrl.text) ?? 0,
-                    rate: selectedVehicle!.defaultRate,
-                    totalAmount: calculatedTotal,
-                  );
-                  widget.onSave(log);
-                  Navigator.pop(context);
+                final hours = double.tryParse(hoursCtrl.text) ?? 0;
+                if (selectedVehicle == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pehle machine select karein.')));
+                  return;
                 }
+                if (selectedWorker == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pehle driver select karein.')));
+                  return;
+                }
+                if (selectedClient == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pehle party select karein.')));
+                  return;
+                }
+                if (hours <= 0 || calculatedTotal <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Hours aur amount sahi enter karein.')));
+                  return;
+                }
+                final log = WorkLog(
+                  id: DateTime.now().microsecondsSinceEpoch.toString(),
+                  date: DateFormat('dd MMM yyyy').format(selectedDate),
+                  vehicleName: selectedVehicle!.name,
+                  vehicleType: selectedVehicle!.type,
+                  driverName: selectedWorker!.name,
+                  clientName: selectedClient!.name,
+                  clientPhone: selectedClient!.phone,
+                  hours: hours,
+                  rate: selectedVehicle!.defaultRate,
+                  totalAmount: calculatedTotal,
+                );
+                widget.onSave(log);
+                Navigator.pop(context);
               },
               child: const Text('Save Record', style: TextStyle(fontSize: 16)),
             ),
