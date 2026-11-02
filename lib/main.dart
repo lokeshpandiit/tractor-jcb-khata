@@ -1610,27 +1610,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ]),
           ),
         ),
-        const Text('Cash Transactions', style: TextStyle(fontWeight: FontWeight.bold)),
-        ...cashBook.map((e) {
-          final cashIn = isCashIn(e);
-          return ListTile(
-            leading: Icon(
-              cashIn ? Icons.call_received : Icons.call_made,
-              color: cashIn ? Colors.green : Colors.red,
-            ),
-            title: Text(e.title),
-            subtitle: Text('${e.date} • ${cashIn ? "Cash In" : "Cash Out"}'),
-            trailing: Text(
-              '${cashIn ? "+" : "-"}₹${e.amount.toStringAsFixed(0)}',
-              style: TextStyle(color: cashIn ? Colors.green : Colors.red, fontWeight: FontWeight.bold),
-            ),
-          );
-        }),
-        if (cashBook.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(20),
-            child: Center(child: Text('Abhi koi cash transaction nahi hai.')),
-          ),
       ],
     );
   }
