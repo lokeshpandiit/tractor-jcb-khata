@@ -303,7 +303,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     return folder.id!;
   }
 
-  Future<void> _uploadDailyDriveBackup(GoogleSignInAccount account) async {
+  Future<void> _uploadDailyDriveBackup(
+    GoogleSignInAccount account, {
+    bool showSuccessMessage = false,
+  }) async {
     if (_driveBackupInProgress) return;
     _driveBackupInProgress = true;
     final uploadRevision = _dataRevision;
@@ -336,8 +339,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     if (uploadRevision != _dataRevision) {
       await prefs.setBool('drive_backup_pending', true);
     }
-    if (mounted && stillCurrent) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Backup Google Drive mein save ho gaya: ' + dateName)));
+    if (showSuccessMessage && mounted && stillCurrent) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Backup Google Drive mein save ho gaya: ' + dateName)),
+      );
     }
     } finally {
       _driveBackupInProgress = false;
@@ -354,7 +359,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     try {
       final account = await _googleSignIn.signIn();
       if (account == null) return;
-      await _uploadDailyDriveBackup(account);
+      await _uploadDailyDriveBackup(account, showSuccessMessage: true);
     } catch (e) {
       if (!mounted) return;
       final details = e.toString();
@@ -632,7 +637,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  void _deleteLog(int index, WorkLog log) {
+  void _deleteLog(WorkLog log, {VoidCallback? refreshPage}) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -645,11 +650,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             onPressed: () {
               setState(() {
                 logs.removeWhere((existing) => existing.id == log.id);
-                // Work entries are bills/receivables, not cash movements.
-                // Do not remove CashBook rows by matching text, amount and date:
-                // an identical genuine cash transaction may exist independently.
+                // Work records are receivables, not cash movements.
+                // Leave independent cash transactions untouched.
               });
               _saveData();
+              refreshPage?.call();
               Navigator.pop(context);
             },
             child: const Text('Delete'),
@@ -1036,7 +1041,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   @override
   Widget build(BuildContext context) {
     final screens = [
-      _buildFleetTab('Machine Name'),
+      _buildFleetTab('Machine'),
       _buildPeopleTab('Worker'),
       _buildPeopleTab('Client'),
       _buildCashTab(),
@@ -1065,12 +1070,35 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           await prefs.setInt('lxh_current_tab_index', idx);
         },
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.agriculture), label: 'Machine Name'),
-          NavigationDestination(icon: Icon(Icons.engineering), label: 'Drivers'),
+          NavigationDestination(icon: Icon(Icons.agriculture), label: 'Machine'),
+          NavigationDestination(icon: Icon(Icons.engineering), label: 'Worker'),
           NavigationDestination(icon: Icon(Icons.groups), label: 'Parties'),
-          NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: 'Khata/Cash'),
+          NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: 'Khata'),
           NavigationDestination(icon: Icon(Icons.swap_vert_circle), label: 'Transactions'),
         ],
+      ),
+    );
+  }
+
+  void _openWorkRecordsPage() {
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (pageContext) => StatefulBuilder(
+          builder: (pageContext, refreshPage) => Scaffold(
+            appBar: AppBar(
+              title: const Text('Work Records'),
+              backgroundColor: const Color(0xFFE65100),
+              foregroundColor: Colors.white,
+            ),
+            body: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                _buildWorkLogsSection(refreshPage: () => refreshPage(() {})),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1080,7 +1108,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       padding: const EdgeInsets.all(16),
       children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Expanded(child: Text('Machine Name', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+          const Expanded(child: Text('Machine', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
           ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE65100), foregroundColor: Colors.white), onPressed: _addMachineDialog, icon: const Icon(Icons.add), label: const Text('Add Machine')),
         ]),
         const SizedBox(height: 10),
@@ -1090,6 +1118,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           label: const Text('New Work Entry'),
           style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 13), foregroundColor: const Color(0xFFE65100), side: const BorderSide(color: Color(0xFFE65100))),
         )),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _openWorkRecordsPage,
+            icon: const Icon(Icons.history),
+            label: Text('Work Records (${logs.length})'),
+            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+          ),
+        ),
         const SizedBox(height: 12),
         ...vehicles.map((v) => Card(child: ListTile(
           leading: CircleAvatar(
@@ -1104,9 +1142,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ]),
         ))),
         if (vehicles.isEmpty) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No machines added yet.'))),
-        const SizedBox(height: 20),
-        const Divider(),
-        _buildWorkLogsSection(),
       ],
     );
   }
@@ -1119,14 +1154,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  void _changeLogsMonth(int offset) {
+  void _changeLogsMonth(int offset, {VoidCallback? refreshPage}) {
     setState(() {
       selectedLogsMonth = DateTime(selectedLogsMonth.year, selectedLogsMonth.month + offset);
       selectedFilterDate = null;
     });
+    refreshPage?.call();
   }
 
-  Future<void> _pickLogsDate() async {
+  Future<void> _pickLogsDate({VoidCallback? refreshPage}) async {
     final today = DateTime.now();
     final monthStart = DateTime(selectedLogsMonth.year, selectedLogsMonth.month);
     final safeInitialDate = selectedFilterDate ??
@@ -1142,9 +1178,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       selectedFilterDate = DateTime(picked.year, picked.month, picked.day);
       selectedLogsMonth = DateTime(picked.year, picked.month);
     });
+    refreshPage?.call();
   }
 
-  Widget _buildWorkLogsSection() {
+  Widget _buildWorkLogsSection({VoidCallback? refreshPage}) {
     final monthLogs = logs.where((log) {
       final date = _parseWorkLogDate(log.date);
       return date != null &&
@@ -1171,7 +1208,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           children: [
             IconButton(
               tooltip: 'Previous month',
-              onPressed: () => _changeLogsMonth(-1),
+              onPressed: () => _changeLogsMonth(-1, refreshPage: refreshPage),
               icon: const Icon(Icons.chevron_left),
             ),
             Expanded(
@@ -1187,12 +1224,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               onPressed: selectedLogsMonth.year == DateTime.now().year &&
                       selectedLogsMonth.month == DateTime.now().month
                   ? null
-                  : () => _changeLogsMonth(1),
+                  : () => _changeLogsMonth(1, refreshPage: refreshPage),
               icon: const Icon(Icons.chevron_right),
             ),
             IconButton(
               tooltip: 'Filter by date',
-              onPressed: _pickLogsDate,
+              onPressed: () => _pickLogsDate(refreshPage: refreshPage),
               icon: const Icon(Icons.calendar_month),
             ),
           ],
@@ -1218,7 +1255,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
-              onPressed: () => setState(() => selectedFilterDate = null),
+              onPressed: () {
+                setState(() => selectedFilterDate = null);
+                refreshPage?.call();
+              },
               icon: const Icon(Icons.filter_alt_off),
               label: Text('Clear date filter • ${DateFormat('dd MMM yyyy').format(selectedFilterDate!)}'),
             ),
@@ -1240,7 +1280,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 IconButton(
                   tooltip: 'Delete work record',
                   icon: const Icon(Icons.delete_outline, color: Colors.red),
-                  onPressed: () => _deleteLog(logs.indexWhere((item) => item.id == log.id), log),
+                  onPressed: () => _deleteLog(log, refreshPage: refreshPage),
                 ),
               ],
             ),
@@ -1316,7 +1356,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final list = driver ? workers : [...clients.where((p)=>p.active), ...clients.where((p)=>!p.active)];
     return ListView(padding: const EdgeInsets.all(16), children: [
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text(driver ? 'Drivers' : 'Clients / Parties', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        Text(driver ? 'Workers' : 'Clients / Parties', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         ElevatedButton.icon(onPressed: ()=>_addMultiplePersonsDialog(role), icon: const Icon(Icons.person_add), label: const Text('Add New')),
       ]),
       if (!driver) const Padding(padding: EdgeInsets.only(top:12,bottom:4), child: Text('ACTIVE • KAAM CHAL RAHA HAI',style:TextStyle(color:Colors.green,fontWeight:FontWeight.bold))),
@@ -1335,7 +1375,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       leading:CircleAvatar(child:Text(p.name.isEmpty?'?':p.name[0].toUpperCase())),
       title:Text(p.name,style:const TextStyle(fontWeight:FontWeight.bold)),
       subtitle:Text(driver ? p.phone : '${p.active ? "Active" : "Completed"} • ${p.phone}'),
-      trailing:Row(mainAxisSize:MainAxisSize.min,children:[Text('₹${due.abs().toStringAsFixed(0)}',style:TextStyle(fontWeight:FontWeight.bold,color:due>0?Colors.orange:Colors.green)),const Icon(Icons.chevron_right)]),
+      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+         Text('₹${due.abs().toStringAsFixed(0)}', style: TextStyle(fontWeight: FontWeight.bold, color: due > 0 ? Colors.orange : Colors.green)),
+         IconButton(
+           tooltip: driver ? 'Delete Worker' : 'Delete Client',
+           visualDensity: VisualDensity.compact,
+           icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+           onPressed: () => _deletePerson(p, driver ? 'Worker' : 'Client'),
+         ),
+         const Icon(Icons.chevron_right),
+       ]),
       onTap:()=>_showPersonLedger(p,driver),
     ));
   }
@@ -1921,7 +1970,10 @@ class _WorkEntrySheetState extends State<WorkEntrySheet> {
             const SizedBox(height: 10),
             DropdownButtonFormField<Person>(
               value: selectedWorker,
-              decoration: const InputDecoration(labelText: 'Select Driver / Worker'),
+              decoration: const InputDecoration(
+                labelText: 'Select Worker',
+                helperText: 'Selected worker will be assigned as Driver for this work',
+              ),
               items: widget.workers.map((w) => DropdownMenuItem(value: w, child: Text(w.name))).toList(),
               onChanged: (w) => setState(() => selectedWorker = w),
             ),
