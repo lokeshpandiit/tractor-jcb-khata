@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:flutter_contacts/flutter_contacts.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'dart:async';
@@ -167,6 +165,9 @@ class MainNavigationScreen extends StatefulWidget {
 }
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
+  static const MethodChannel _contactPickerChannel =
+      MethodChannel('lxh_one/contact_picker');
+
   int _currentIndex = 0;
   bool _tabReady = false;
   DateTime? selectedFilterDate;
@@ -515,6 +516,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     required String title,
     required double amount,
     required bool cashIn,
+    String partyName = '',
   }) {
     cashBook.insert(
       0,
@@ -523,6 +525,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         amount: amount,
         type: cashIn ? 'Cash In' : 'Cash Out',
         date: DateFormat('dd MMM yyyy').format(DateTime.now()),
+        partyName: partyName,
       ),
     );
   }
@@ -619,20 +622,22 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   // No broad READ_CONTACTS permission is required for this flow.
   Future<void> _addMultiplePersonsDialog(String role) async {
     try {
+      // Persist the selected tab before handing control to Android's picker.
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('lxh_current_tab_index', _currentIndex);
-      final Contact? contact = await FlutterContacts.openExternalPick();
-      if (!mounted || contact == null) return;
-      final name = contact.displayName.trim();
-      final phone = contact.phones.isNotEmpty
-          ? contact.phones.first.number.replaceAll(RegExp(r'\D'), '')
-          : '';
+
+      final picked = await _contactPickerChannel.invokeMapMethod<String, dynamic>('pickPhoneContact');
+      if (!mounted || picked == null) return;
+
+      final name = (picked['name'] ?? '').toString().trim();
+      final phone = (picked['phone'] ?? '').toString().replaceAll(RegExp(r'\\D'), '');
       if (name.isEmpty || phone.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Selected contact has no name or phone number.')),
         );
         return;
       }
+
       setState(() {
         final newPerson = Person(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -647,10 +652,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         }
       });
       await _saveData();
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Contact select nahi ho paya: ${e.message ?? e.code}')),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open contact picker: $e')),
+        SnackBar(content: Text('Could not select contact: $e')),
       );
     }
   }
@@ -990,9 +1000,19 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       setState(() {
         ledgerEntries.insert(0,LedgerEntry(id:DateTime.now().microsecondsSinceEpoch.toString(),kind:kind,personName:p.name,title:entryTitle,amount:value,date:DateFormat('dd MMM yyyy').format(DateTime.now())));
         if (kind == 'clientPayment') {
-          _recordCashMovement(title: 'Client payment received - ${p.name}', amount: value, cashIn: true);
+          _recordCashMovement(
+            title: 'Payment Received',
+            amount: value,
+            cashIn: true,
+            partyName: p.name,
+          );
         } else if (kind == 'driverAdvance' || kind == 'driverPayment') {
-          _recordCashMovement(title: '${names[kind]} - ${p.name}', amount: value, cashIn: false);
+          _recordCashMovement(
+            title: kind == 'driverPayment' ? 'Salary / Payment Given' : 'Advance Given',
+            amount: value,
+            cashIn: false,
+            partyName: p.name,
+          );
         }
       });
       _saveData();Navigator.pop(ctx);
@@ -1139,34 +1159,200 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   Future<void> _addGeneralEntry(String kind) async {
-    final person=TextEditingController(),amount=TextEditingController(),interest=TextEditingController(),note=TextEditingController();
-    final loan=kind=='loan';
-    await showDialog(context:context,builder:(ctx)=>AlertDialog(
-      title:Text(loan?'Give Loan':'Add Expense'),
-      content:Column(mainAxisSize:MainAxisSize.min,children:[
-        TextField(controller:loan?person:note,decoration:InputDecoration(labelText:loan?'Person Name':'Expense Detail (Diesel / Repair etc.)')),
-        TextField(controller:amount,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:InputDecoration(labelText:loan?'Principal Amount (₹)':'Expense Amount (₹)')),
-        if(loan)TextField(controller:interest,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Expected Interest (₹)')),
-      ]),
-      actions:[
-        TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancel')),
-        ElevatedButton(onPressed:(){
-          final value=double.tryParse(amount.text)??0,interestValue=double.tryParse(interest.text)??0;
-          final who=person.text.trim();
-          if(value<=0||(loan&&who.isEmpty))return;
-          final entryTitle = loan ? who : (note.text.trim().isEmpty ? 'Expense' : note.text.trim());
-          setState(() {
-            ledgerEntries.insert(0,LedgerEntry(id:DateTime.now().microsecondsSinceEpoch.toString(),kind:kind,personName:loan?who:'',title:entryTitle,amount:value,interest:interestValue,date:DateFormat('dd MMM yyyy').format(DateTime.now())));
-            _recordCashMovement(
-              title: loan ? 'Loan given - $who' : 'Expense - $entryTitle',
-              amount: value,
-              cashIn: false,
-            );
-          });
-          _saveData();Navigator.pop(ctx);
-        },child:const Text('Save')),
+    final person = TextEditingController();
+    final paidTo = TextEditingController();
+    final amount = TextEditingController();
+    final interest = TextEditingController();
+    final note = TextEditingController();
+    final loan = kind == 'loan';
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(loan ? 'Give Loan' : 'Add Expense'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (loan)
+              TextField(controller: person, decoration: const InputDecoration(labelText: 'Borrower Name'))
+            else ...[
+              TextField(controller: note, decoration: const InputDecoration(labelText: 'Expense Detail (Diesel / Repair etc.)')),
+              TextField(controller: paidTo, decoration: const InputDecoration(labelText: 'Paid To (Person / Shop, optional)')),
+            ],
+            TextField(
+              controller: amount,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(labelText: loan ? 'Principal Amount (₹)' : 'Amount Paid (₹)'),
+            ),
+            if (loan)
+              TextField(
+                controller: interest,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Expected Interest (₹)'),
+              ),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              final value = double.tryParse(amount.text) ?? 0;
+              final interestValue = double.tryParse(interest.text) ?? 0;
+              final who = person.text.trim();
+              final vendor = paidTo.text.trim();
+              if (value <= 0 || (loan && who.isEmpty)) return;
+              final entryTitle = loan ? who : (note.text.trim().isEmpty ? 'Expense' : note.text.trim());
+              setState(() {
+                ledgerEntries.insert(0, LedgerEntry(
+                  id: DateTime.now().microsecondsSinceEpoch.toString(),
+                  kind: kind,
+                  personName: loan ? who : '',
+                  title: entryTitle,
+                  amount: value,
+                  interest: interestValue,
+                  date: DateFormat('dd MMM yyyy').format(DateTime.now()),
+                ));
+                _recordCashMovement(
+                  title: loan ? 'Loan Given' : entryTitle,
+                  amount: value,
+                  cashIn: false,
+                  partyName: loan ? who : vendor,
+                );
+              });
+              _saveData();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _addManualTransaction() async {
+    final detail = TextEditingController();
+    final person = TextEditingController();
+    final amount = TextEditingController();
+    String direction = 'Cash Out';
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, refreshDialog) => AlertDialog(
+          title: const Text('Add Transaction'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              DropdownButtonFormField<String>(
+                value: direction,
+                decoration: const InputDecoration(labelText: 'Type'),
+                items: const [
+                  DropdownMenuItem(value: 'Cash In', child: Text('Credit • Money Received')),
+                  DropdownMenuItem(value: 'Cash Out', child: Text('Debit • Money Paid')),
+                ],
+                onChanged: (value) => refreshDialog(() => direction = value ?? 'Cash Out'),
+              ),
+              TextField(controller: person, decoration: const InputDecoration(labelText: 'Name (Client / Driver / Shop)')),
+              TextField(controller: detail, decoration: const InputDecoration(labelText: 'Detail (e.g. Diesel)')),
+              TextField(
+                controller: amount,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Amount (₹)'),
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () {
+                final value = double.tryParse(amount.text) ?? 0;
+                final title = detail.text.trim();
+                if (value <= 0 || title.isEmpty) return;
+                setState(() {
+                  cashBook.insert(0, CashEntry(
+                    title: title,
+                    amount: value,
+                    type: direction,
+                    date: DateFormat('dd MMM yyyy').format(DateTime.now()),
+                    partyName: person.text.trim(),
+                  ));
+                });
+                _saveData();
+                Navigator.pop(ctx);
+              },
+              child: const Text('Save Transaction'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTransactionsTab() {
+    final credits = cashBook.where((e) => e.type.toLowerCase() == 'cash in').toList();
+    final debits = cashBook.where((e) => e.type.toLowerCase() != 'cash in').toList();
+    final creditTotal = credits.fold(0.0, (sum, e) => sum + e.amount);
+    final debitTotal = debits.fold(0.0, (sum, e) => sum + e.amount);
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            const Expanded(child: Text('Transactions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
+            ElevatedButton.icon(
+              onPressed: _addManualTransaction,
+              icon: const Icon(Icons.add),
+              label: const Text('Add'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(children: [
+              _ledgerLine('Total Credit', creditTotal),
+              _ledgerLine('Total Debit', debitTotal),
+              _ledgerLine('Net Balance', creditTotal - debitTotal),
+            ]),
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: Text('Credit = Green • Debit = Red', style: TextStyle(fontSize: 12, color: Colors.black54)),
+        ),
+        if (cashBook.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(28),
+            child: Center(child: Text('Abhi koi transaction nahi hai.')),
+          ),
+        ...cashBook.map((entry) {
+          final credit = entry.type.toLowerCase() == 'cash in';
+          final color = credit ? Colors.green : Colors.red;
+          final displayName = entry.partyName.trim().isNotEmpty
+              ? entry.partyName.trim()
+              : entry.title;
+          return Card(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            child: ListTile(
+              leading: CircleAvatar(
+                backgroundColor: color.withOpacity(0.12),
+                child: Icon(credit ? Icons.call_received : Icons.call_made, color: color),
+              ),
+              title: Text(displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text('${entry.date} • ${entry.partyName.trim().isEmpty ? (credit ? "Credit" : "Debit") : entry.title}'),
+              trailing: Text(
+                '${credit ? "+" : "-"}₹${entry.amount.toStringAsFixed(0)}',
+                style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+            ),
+          );
+        }),
+        const SizedBox(height: 8),
+        const Text(
+          'Client Payment and Driver Salary/Advance automatically appear here. Diesel and other direct expenses can be added manually.',
+          style: TextStyle(fontSize: 12, color: Colors.black54),
+        ),
       ],
-    ));
+    );
   }
 
   void _addExpenseDialog() {
