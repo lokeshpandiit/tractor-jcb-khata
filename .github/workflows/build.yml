@@ -30,9 +30,12 @@ jobs:
           rm -rf android
           flutter create . --platforms android --project-name tractor_jcb_khata
 
-          # Restore the native contact-picker bridge after generating Android files.
+          # Android is generated cleanly in CI. App-specific Android files are
+          # kept in tool/android and copied back after generation, so CI settings
+          # do not depend on edits to the temporary android/ directory.
           mkdir -p android/app/src/main/kotlin/com/example/tractor_jcb_khata
           cp tool/android/MainActivity.kt android/app/src/main/kotlin/com/example/tractor_jcb_khata/MainActivity.kt
+          cp tool/android/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
 
           # Force Kotlin version to 1.9.24 in settings.gradle
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/g' android/settings.gradle
